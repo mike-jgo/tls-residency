@@ -1,0 +1,9 @@
+node_modules/
+
+# Environment secrets
+.env
+
+# SQLite database
+*.db
+*.db-shm
+*.db-wal

@@ -1,0 +1,19 @@
+{
+  "name": "tls-attendance",
+  "version": "1.0.0",
+  "description": "RFID residency-hours attendance system for a school media organization",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "dotenv": "^17.4.2",
+    "express": "^4.21.2"
+  },
+  "allowScripts": {
+    "better-sqlite3@11.10.0": true
+  }
+}
