@@ -156,7 +156,7 @@ function usersPage({ users, flash, unknownScans = [] }) {
           </tr>`).join('')}</tbody>
       </table>
       <p class="caphint">
-        Cleared when the server restarts — these are a registration shortcut, not a record.
+        Cleared when the server restarts.
       </p>
     </div>`
     : '';
