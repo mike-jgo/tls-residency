@@ -53,7 +53,7 @@ Residency server running on http://localhost:3000
 
 Open the tap screen, click on it so it has focus, and tap a card. It only opens
 from the machine the server runs on; anywhere else gets a 403. `npm test` covers
-the clock check, the in/out toggle, repeat suppression, the daily shutdown, the
+the clock check (network and hardware clock), the in/out toggle, repeat suppression, the daily shutdown, the
 hours maths, report date handling, database persistence, deactivation, and backup
 and restore, and the Google Sheets sync (against a stand-in for Google) — none of
 it needs hardware or a network.
@@ -377,11 +377,9 @@ minute until it works.
 The first sync uploads the whole history. Pointing `SHEETS_SPREADSHEET_ID` at a
 different spreadsheet does the same there.
 
-After **restoring a backup**, the sheet may still show taps made after that backup
-was taken. They are overwritten as new taps arrive; to start clean, delete the month
-tabs concerned and point the server at the spreadsheet again by clearing the mark:
-`sqlite3 residency.db "DELETE FROM meta WHERE key='sync_spreadsheet'"` (server
-stopped).
+After **restoring a backup**, the next sync empties the month tabs and uploads the
+restored history from the top, so taps made after that backup don't linger in the
+sheet.
 
 ## The clock
 
@@ -399,9 +397,42 @@ check the network icon.
 
 If the wifi is down all day, nothing is recorded that day. That is deliberate:
 missing taps are obvious and can be added by hand, whereas wrong times would
-quietly go into the hours report. If that happens often, add a DS3231 RTC module
-(a couple of dollars) or, on a Pi 5, connect the RTC battery header — the Pi then
-knows the time at boot and the wait disappears.
+quietly go into the hours report. If that happens often, add a hardware clock —
+see below.
+
+### A hardware clock (RTC)
+
+With a battery-backed clock — a DS3231 module (a couple of dollars), or on a Pi 5
+a battery on the RTC header — the Pi knows the time at boot. Taps then start
+straight away, with or without wifi, and the log says
+`clock is set from the hardware clock`.
+
+Having the module is not enough for the server to believe it: a flat battery
+leaves a clock that restarts from zero every morning. The hardware clock is only
+trusted when all of these hold, and otherwise the server waits for wifi exactly as
+it does without one, logging `not trusting the hardware clock: …` and why:
+
+- it can be read;
+- it is not earlier than the last recorded tap (time doesn't run backwards — a
+  clock that says otherwise has lost power);
+- the system clock agrees with it, to within a few seconds.
+
+**This logic is tested against simulated clock readings only** (`npm test`). It
+has not yet run on a real module. When the hardware arrives, check on the Pi:
+
+1. *It's there.* For a DS3231, add `dtoverlay=i2c-rtc,ds3231` to
+   `/boot/firmware/config.txt` and reboot. Then
+   `cat /sys/class/rtc/rtc0/since_epoch` prints a number, and `sudo hwclock -r`
+   prints the right time. (With wifi up, the Pi sets the hardware clock by itself.)
+2. *It carries the time.* Shut down, unplug for a few minutes, turn the wifi
+   router off (or forget the network), and boot. The tap screen should go straight
+   to **Tap your card**, and `journalctl -u residency` should show
+   `clock is set from the hardware clock`. A tap should be stamped with the right
+   time.
+3. *A flat battery is caught.* Shut down, take the battery out, and boot without
+   wifi. The tap screen should stay on **Setting the clock…** and the log should
+   show `not trusting the hardware clock`. This is the case the simulation can't
+   vouch for: a real module may report a flat battery differently than assumed.
 
 Two more things keep the in/out toggle right whatever the clock does:
 

@@ -80,6 +80,7 @@ const stmt = {
     WHERE e.id > ? ORDER BY e.id ASC LIMIT ?
   `),
   firstEventTs: db.prepare('SELECT MIN(ts) FROM events').pluck(),
+  lastEventTs:  db.prepare('SELECT MAX(ts) FROM events').pluck(),
   countAfter:   db.prepare('SELECT COUNT(*) FROM events WHERE id > ?').pluck(),
   countBefore:  db.prepare(
     'SELECT COUNT(*) FROM events WHERE ts >= ? AND ts < ? AND id < ?'
@@ -139,6 +140,7 @@ module.exports = {
   getCurrentlyIn: (bootId) => stmt.currentlyIn.all(bootId),
 
   getFirstEventTs: () => stmt.firstEventTs.get(),
+  getLastEventTs:  () => stmt.lastEventTs.get(),
   getMeta: (key) => stmt.getMeta.get(key),
   setMeta: (key, value) => stmt.setMeta.run(key, value),
   getEventsAfter:   (id, limit) => stmt.eventsAfter.all(id, limit),

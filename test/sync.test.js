@@ -37,6 +37,15 @@ function fakeSheet() {
     spreadsheetId: 'sheet-' + ++sheetCount,
     fail: null,
     writes: [], // every range sent, applied or not
+    clears: [],
+    async clearRanges(ranges) {
+      for (const range of ranges) {
+        sheet.clears.push(range);
+        const [, title] = /^'(.+)'!A2:G$/.exec(range);
+        const cells = tabs.get(title);
+        for (const k of [...cells.keys()]) if (Number(k.slice(1)) >= 2) cells.delete(k);
+      }
+    },
     tabs,
     async listTabs() { return [...tabs.keys()]; },
     async addTabs(titles) { for (const t of titles) tabs.set(t, new Map()); },
@@ -308,4 +317,78 @@ test('a tap that arrives during an upload goes up straight after it', async () =
   await until(() => sync.status().pending === 0 && !sync.status().running);
   sync.stop();
   assert.deepStrictEqual(sheet.column('April 2027 Logs', 'A'), [first, second]);
+});
+
+// ---- Review fixes --------------------------------------------------------
+
+// After a restore the sheet holds taps the database no longer has. The
+// restore clears the mark (see backup.test.js); the next sync must then leave
+// nothing behind that isn't in the database.
+test('starting from the top removes rows the database no longer has', async () => {
+  const lea = person('Lea 27');
+  const id = tapAt(lea, 'in', at(2027, 5, 3, 9));
+  const sheet = fakeSheet();
+  const sync = syncer(sheet, at(2027, 5, 3, 10));
+  await sync.syncOnce();
+
+  // What a later, now-lost stretch of the database had put in the sheet.
+  sheet.tabs.get('May 2027 Logs').set('A3', 999).set('D3', 'Ghost');
+  sheet.tabs.set('June 2027 Logs', new Map([['A1', 'Tap #'], ['A2', 1000], ['D2', 'Ghost']]));
+  sheet.tabs.set('June 2027', new Map([['A1', 'Name'], ['A2', 'Ghost'], ['C2', 5]]));
+  sheet.tabs.set('Notes', new Map([['A2', 'someone\'s own tab']]));
+
+  store.setMeta('sync_spreadsheet', ''); // what restoreBackup leaves
+  await syncer(sheet, at(2027, 5, 3, 11)).syncOnce();
+
+  assert.deepStrictEqual(sheet.column('May 2027 Logs', 'A'), [id]);
+  assert.deepStrictEqual(sheet.column('June 2027 Logs', 'A'), []);
+  assert.deepStrictEqual(sheet.column('June 2027', 'A'), []);
+  assert.strictEqual(sheet.cell('Notes', 'A2'), 'someone\'s own tab', 'only the sync\'s own tabs are emptied');
+  assert.strictEqual(sync.status().pending, 0);
+});
+
+test('a failed start from the top is finished by the retry', async () => {
+  const sheet = fakeSheet();
+  const sync = syncer(sheet, at(2027, 5, 4, 10));
+  await sync.syncOnce();
+  sheet.tabs.get('May 2027 Logs').set('A9', 999);
+  store.setMeta('sync_spreadsheet', '');
+
+  sheet.fail = 'before';
+  await assert.rejects(sync.syncOnce());
+  await sync.syncOnce();
+  assert.ok(!sheet.column('May 2027 Logs', 'A').includes(999));
+});
+
+// A check-in left open at shutdown is "still in" until the next boot, when it
+// becomes abandoned. No new tap happens in that month, so the old month has
+// to be rewritten anyway.
+test('last month\'s open check-in stops showing as still in after the next boot', async () => {
+  const mo = person('Mo 27');
+  tapAt(mo, 'in', at(2027, 6, 30, 17), 'boot-june');
+  const sheet = fakeSheet();
+  await syncer(sheet, at(2027, 6, 30, 18), { bootId: 'boot-june' }).syncOnce();
+  const row = () => sheet.column('June 2027', 'A').indexOf('Mo 27') + 2;
+  assert.strictEqual(sheet.cell('June 2027', 'E' + row()), 'yes', 'still in, that evening');
+
+  // Next morning is a new month and a new boot. Nobody has tapped yet.
+  await syncer(sheet, at(2027, 7, 1, 8), { bootId: 'boot-july' }).syncOnce();
+  assert.strictEqual(sheet.cell('June 2027', 'E' + row()), undefined, 'no longer still in');
+  assert.strictEqual(sheet.cell('June 2027', 'F' + row()), 'yes', 'not counted');
+});
+
+test('a roster change reaches earlier months too', async () => {
+  const ned = person('Ned 27');
+  tapAt(ned, 'in', at(2027, 8, 2, 9));
+  tapAt(ned, 'out', at(2027, 8, 2, 10));
+  const sheet = fakeSheet();
+  const sync = syncer(sheet, at(2027, 9, 1, 9), { debounceMs: 0 });
+  await sync.run();
+  const row = sheet.column('August 2027', 'A').indexOf('Ned 27') + 2;
+  assert.strictEqual(sheet.cell('August 2027', 'G' + row), undefined);
+
+  store.setUserActive(ned.id, false);
+  sync.kick(true);
+  await until(() => sheet.cell('August 2027', 'G' + row) === 'yes');
+  sync.stop();
 });

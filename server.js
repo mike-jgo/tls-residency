@@ -90,7 +90,7 @@ const sync = SHEETS_SPREADSHEET_ID
     onChange: () => showStatus(), // the tap screen says when it is offline
   })
   : null;
-const kickSync = () => { if (sync) sync.kick(); };
+const kickSync = (rosterChanged) => { if (sync) sync.kick(rosterChanged); };
 
 // ---- Admin auth (HTTP Basic) --------------------------------------------
 // The credentials ride in a header, so they are only as private as the
@@ -164,7 +164,7 @@ app.post('/admin/users', (req, res) => {
   try {
     store.createUser(name, studentId, role, rfid);
     scanner.forgetUnknown(rfid);
-    kickSync();
+    kickSync(true);
     res.redirect('/admin/users?ok=' + encodeURIComponent(`${name} registered.`));
   } catch (e) {
     res.redirect('/admin/users?err=' + encodeURIComponent('Could not save — ' + e.message));
@@ -176,14 +176,14 @@ app.post('/admin/users', (req, res) => {
 app.post('/admin/users/:id/deactivate', (req, res) => {
   store.setUserActive(Number(req.params.id), false);
   showStatus(); // they may have been checked in
-  kickSync();
+  kickSync(true);
   res.redirect('/admin/users?ok=' + encodeURIComponent('Person deactivated. Their history is kept.'));
 });
 
 app.post('/admin/users/:id/reactivate', (req, res) => {
   store.setUserActive(Number(req.params.id), true);
   showStatus();
-  kickSync();
+  kickSync(true);
   res.redirect('/admin/users?ok=' + encodeURIComponent('Person reactivated.'));
 });
 
@@ -200,13 +200,15 @@ function readRange(req) {
 }
 
 // The hours page is laid out like the spreadsheet: a tab for all time, then
-// one per month, newest first, back to the month of the first tap. A tab is
+// one per month that could hold taps, newest first. A tab is
 // just a link to that month's date range.
 function monthTabs() {
   const tabs = [{ label: 'Totals', start: '', end: '' }];
-  const now = dates.monthOf(new Date().toISOString());
-  const from = dates.monthOf(store.getFirstEventTs() || new Date().toISOString());
-  for (let { y, m } = now; y > from.y || (y === from.y && m >= from.m); m === 1 ? (y--, m = 12) : m--) {
+  // Always includes the current month, even if the clock is wrong and "now"
+  // is before the first tap or after the last.
+  const now = new Date().toISOString();
+  const stamps = [now, store.getFirstEventTs() || now, store.getLastEventTs() || now].sort();
+  for (const { y, m } of dates.monthsBetween(stamps[0], stamps[2]).reverse()) {
     const { first, last } = dates.monthDays(y, m);
     tabs.push({ label: dates.monthTitle(y, m), start: first, end: last });
   }
@@ -215,10 +217,12 @@ function monthTabs() {
 
 // Residency is graded by the month, so the page opens on the current one.
 app.get('/admin/hours', (req, res) => {
-  const tabs = monthTabs();
   if (req.query.start === undefined && req.query.end === undefined) {
-    return res.redirect(`/admin/hours?start=${tabs[1].start}&end=${tabs[1].end}`);
+    const { y, m } = dates.monthOf(new Date().toISOString());
+    const { first, last } = dates.monthDays(y, m);
+    return res.redirect(`/admin/hours?start=${first}&end=${last}`);
   }
+  const tabs = monthTabs();
   const { start, end, startISO, endISO, error } = readRange(req);
   const { report } = buildReport(startISO, endISO);
   res.send(views.hoursPage({
@@ -369,6 +373,9 @@ app.listen(PORT, () => {
   clock = machine.watchClock({
     onChange: () => { showStatus(); kickSync(); },
     log: (message) => console.log(`  ${message}`),
+    // A hardware clock claiming to be earlier than a tap we already recorded
+    // has lost power — see rtcVerdict.
+    floor: () => Date.parse(store.getLastEventTs() || '') || 0,
   });
   console.log('');
   backUp('startup');

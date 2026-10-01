@@ -109,3 +109,17 @@ test('the days of a month are the local month\'s first and last', () => {
   assert.deepStrictEqual(dates.monthDays(2026, 2), { first: '2026-02-01', last: '2026-02-28' });
   assert.deepStrictEqual(dates.monthDays(2028, 2), { first: '2028-02-01', last: '2028-02-29' });
 });
+
+test('months between two instants, in either order, across a year end', () => {
+  const months = [{ y: 2026, m: 11 }, { y: 2026, m: 12 }, { y: 2027, m: 1 }];
+  assert.deepStrictEqual(dates.monthsBetween('2026-11-10T04:00:00.000Z', '2027-01-10T04:00:00.000Z'), months);
+  assert.deepStrictEqual(dates.monthsBetween('2027-01-10T04:00:00.000Z', '2026-11-10T04:00:00.000Z'), months);
+  assert.deepStrictEqual(dates.monthsBetween('2026-11-10T04:00:00.000Z', '2026-11-20T04:00:00.000Z'), [{ y: 2026, m: 11 }]);
+});
+
+test('only the sync\'s own tabs match the month-tab pattern', () => {
+  assert.ok(dates.MONTH_TAB_RE.test('October 2026'));
+  assert.ok(dates.MONTH_TAB_RE.test('October 2026 Logs'));
+  assert.ok(!dates.MONTH_TAB_RE.test('Totals'));
+  assert.ok(!dates.MONTH_TAB_RE.test('October 2026 notes'));
+});
