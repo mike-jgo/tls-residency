@@ -32,11 +32,19 @@ db.exec(`
     user_id  INTEGER NOT NULL,
     type     TEXT    NOT NULL CHECK (type IN ('in','out')),
     ts       TEXT    NOT NULL,
+    boot_id  TEXT,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
   CREATE INDEX IF NOT EXISTS idx_events_user_ts ON events(user_id, ts);
 `);
+
+// Databases created before boot ids were recorded lack the column. Their
+// events keep a NULL boot id, which reads as "some earlier boot" — correct,
+// since every one of them was written before this machine last started.
+if (!db.pragma('table_info(events)').some((c) => c.name === 'boot_id')) {
+  db.exec('ALTER TABLE events ADD COLUMN boot_id TEXT');
+}
 
 // ---- Prepared statements (compiled once, reused) -------------------------
 
@@ -57,20 +65,22 @@ const stmt = {
     'SELECT * FROM events WHERE user_id = ? ORDER BY id DESC LIMIT 1'
   ),
   insertEvent:  db.prepare(
-    'INSERT INTO events (user_id, type, ts) VALUES (?, ?, ?)'
+    'INSERT INTO events (user_id, type, ts, boot_id) VALUES (?, ?, ?, ?)'
   ),
   // Insertion order is the true sequence of taps — see the note above.
   eventsForUser: db.prepare(
     'SELECT * FROM events WHERE user_id = ? ORDER BY id ASC'
   ),
-  // Everyone whose most recent event is a check-in = currently in the office.
+  // Everyone whose most recent event is a check-in made since the machine last
+  // started = currently in the office. A check-in from an earlier boot was
+  // never closed before shutdown; that person went home.
   currentlyIn: db.prepare(`
     SELECT u.*, e.ts AS since
     FROM users u
     JOIN events e ON e.id = (
       SELECT id FROM events WHERE user_id = u.id ORDER BY id DESC LIMIT 1
     )
-    WHERE e.type = 'in'
+    WHERE e.type = 'in' AND e.boot_id = ?
     ORDER BY e.ts DESC
   `),
 };
@@ -94,7 +104,7 @@ module.exports = {
   deleteUser: (id) => stmt.deleteUser.run(id),
 
   getLastEvent:   (userId) => stmt.lastEvent.get(userId),
-  insertEvent:    (userId, type, ts) => stmt.insertEvent.run(userId, type, ts),
+  insertEvent:    (userId, type, ts, bootId = null) => stmt.insertEvent.run(userId, type, ts, bootId),
   getEventsForUser: (userId) => stmt.eventsForUser.all(userId),
-  getCurrentlyIn: () => stmt.currentlyIn.all(),
+  getCurrentlyIn: (bootId) => stmt.currentlyIn.all(bootId),
 };

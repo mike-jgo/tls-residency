@@ -36,7 +36,11 @@ const mono = () => elapsed;
 const advance = (ms) => { clock += ms; elapsed += ms; };
 const jumpClock = (ms) => { clock += ms; };
 
-const scanner = createScanner({ store, now, mono });
+// The machine is switched off every night; each test day runs in one boot
+// unless a test says otherwise.
+const BOOT = 'boot-monday';
+
+const scanner = createScanner({ store, now, mono, bootId: BOOT });
 
 // Every test gets its own card, so the per-card repeat window and the shared
 // database cannot leak between them.
@@ -89,7 +93,7 @@ test('the toggle follows the database, so a restart cannot desync it', () => {
   const card = register('Dita');
   tap(card); // in
   // A fresh scanner is what a restarted server has: no memory of any tap.
-  const restarted = createScanner({ store, now, mono });
+  const restarted = createScanner({ store, now, mono, bootId: BOOT });
   advance(HOUR);
   assert.strictEqual(restarted.handle(card).direction, 'out');
 });
@@ -267,7 +271,7 @@ test('a forwards clock correction does not turn a departure into an arrival', ()
   assert.strictEqual(result.certain, true, 'this process saw the check-in itself');
 
   assert.deepStrictEqual(store.getEventsForUser(user.id).map((e) => e.type), ['in', 'out']);
-  assert.ok(!store.getCurrentlyIn().some((u) => u.id === user.id), 'they went home');
+  assert.ok(!store.getCurrentlyIn(BOOT).some((u) => u.id === user.id), 'they went home');
 });
 
 test('a forwards correction does not delay a genuinely stale check-in either', () => {
@@ -289,7 +293,7 @@ test('a forwards correction does not delay a genuinely stale check-in either', (
 test('after a restart the age comes from the stored timestamp, marked uncertain', () => {
   const card = register('Adel');
   tap(card); // recorded by this scanner...
-  const restarted = createScanner({ store, now, mono }); // ...but not by this one
+  const restarted = createScanner({ store, now, mono, bootId: BOOT }); // ...but not by this one
 
   advance(20 * HOUR);
   const result = restarted.handle(card);
@@ -301,7 +305,7 @@ test('after a restart the age comes from the stored timestamp, marked uncertain'
 test('a restart does not by itself make a recent check-in look stale', () => {
   const card = register('Bex');
   tap(card);
-  const restarted = createScanner({ store, now, mono });
+  const restarted = createScanner({ store, now, mono, bootId: BOOT });
 
   advance(2 * HOUR);
   const result = restarted.handle(card);
@@ -325,6 +329,115 @@ test('a forgotten check-out costs that session and nothing else', () => {
   assert.deepStrictEqual(sessions.map((s) => s.invalid), [true, false]);
   assert.strictEqual(hours.msToHours(hours.sumMs(sessions)), 4);
   assert.strictEqual(store.getLastEvent(user.id).type, 'out');
+});
+
+// ---- The daily shutdown ----------------------------------------------------
+//
+// The machine is off overnight, so nobody can be checked in across a
+// shutdown. A check-in still open from an earlier boot was abandoned, and
+// that must hold even when the clock can't tell — which, first thing in the
+// morning on a Pi with no RTC, it can't.
+
+test('a check-in from before the shutdown is abandoned, whatever the clock says', () => {
+  const card = register('Cyd');
+  tap(card); // Monday: in, then forgets to tap out; the machine is shut down
+
+  // Tuesday morning. The Pi boots believing it is still Monday evening, so by
+  // the wall clock barely any time has passed. Only the boot id knows better.
+  const tuesday = createScanner({ store, now, mono, bootId: 'boot-tuesday' });
+  advance(REPEAT_IGNORE_MS);
+  const result = tuesday.handle(card);
+  assert.strictEqual(result.direction, 'in', 'an arrival must stay an arrival');
+  assert.strictEqual(result.stale, true);
+  assert.strictEqual(result.certain, true, 'a shutdown in between is a fact, not a measurement');
+
+  advance(3 * HOUR);
+  assert.strictEqual(tuesday.handle(card).direction, 'out', 'and the day carries on normally');
+});
+
+test('a check-out from before the shutdown is not an abandoned session', () => {
+  const card = register('Dov');
+  tap(card);
+  tap(card); // tapped out properly on Monday
+  const tuesday = createScanner({ store, now, mono, bootId: 'boot-tuesday-2' });
+  advance(REPEAT_IGNORE_MS);
+  const result = tuesday.handle(card);
+  assert.strictEqual(result.direction, 'in');
+  assert.strictEqual(result.stale, false);
+});
+
+// Databases from before boot ids were recorded: their events have none, and
+// every one of them was written before this boot.
+test('an old check-in with no boot id counts as from an earlier boot', () => {
+  const card = register('Ely');
+  const user = store.getUserByRfid(card);
+  store.insertEvent(user.id, 'in', new Date(clock).toISOString()); // no boot id
+  advance(REPEAT_IGNORE_MS);
+  assert.strictEqual(scanner.handle(card).stale, true);
+});
+
+test('someone who never tapped out yesterday is not shown as in today', () => {
+  const card = register('Fio');
+  const user = store.getUserByRfid(card);
+  tap(card); // Monday, never tapped out
+  assert.ok(store.getCurrentlyIn(BOOT).some((u) => u.id === user.id), 'in on Monday');
+  assert.ok(!store.getCurrentlyIn('boot-wednesday').some((u) => u.id === user.id),
+    'not in after the machine was switched off and on again');
+});
+
+test('the report flags a check-in left open at shutdown and counts it as zero', () => {
+  const card = register('Gus');
+  const user = store.getUserByRfid(card);
+  tap(card); // Monday, never tapped out
+  const events = store.getEventsForUser(user.id);
+
+  const monday = hours.buildSessions(events, { bootId: BOOT });
+  assert.deepStrictEqual(monday.map((s) => [s.open, s.invalid]), [[true, false]], 'still in on Monday');
+
+  const later = hours.buildSessions(events, { bootId: 'boot-thursday' });
+  assert.deepStrictEqual(later.map((s) => [s.open, s.invalid]), [[true, true]], 'abandoned after shutdown');
+  assert.strictEqual(hours.sumMs(later), 0);
+});
+
+// ---- The clock check -------------------------------------------------------
+//
+// Until the Pi has set its clock over wifi it believes it is last night, so a
+// tap recorded then gets the wrong time. Refuse it instead.
+
+test('a tap before the clock is set records nothing', () => {
+  let ready = false;
+  const booting = createScanner({ store, now, mono, bootId: BOOT, clockReady: () => ready });
+  const card = register('Hal');
+  const user = store.getUserByRfid(card);
+
+  advance(REPEAT_IGNORE_MS);
+  const result = booting.handle(card);
+  assert.strictEqual(result.status, 'clock');
+  assert.strictEqual(result.rfid, card);
+  assert.strictEqual(store.getEventsForUser(user.id).length, 0);
+});
+
+test('an unknown card before the clock is set is refused too, not listed', () => {
+  const booting = createScanner({ store, now, mono, bootId: BOOT, clockReady: () => false });
+  advance(REPEAT_IGNORE_MS);
+  assert.strictEqual(booting.handle('7777777001').status, 'clock');
+  assert.strictEqual(booting.unknownScans.length, 0);
+});
+
+// The person was told "wait a moment and tap again". That retry must count,
+// not be swallowed as a repeat of a tap that was never acted on.
+test('the retry once the clock is set is recorded straight away', () => {
+  let ready = false;
+  const booting = createScanner({ store, now, mono, bootId: BOOT, clockReady: () => ready });
+  const card = register('Ines');
+
+  advance(REPEAT_IGNORE_MS);
+  booting.handle(card); // refused
+  ready = true;
+  advance(SECOND); // well inside the repeat window
+  const result = booting.handle(card);
+  assert.strictEqual(result.status, 'ok');
+  assert.strictEqual(result.direction, 'in');
 });
 
 // ---- Unknown cards -------------------------------------------------------
@@ -404,10 +517,10 @@ test('the last event is the last one inserted, even if its timestamp is older', 
 test('a stale-dated arrival still shows the person as currently in', () => {
   const card = register('Vito');
   const user = store.getUserByRfid(card);
-  store.insertEvent(user.id, 'out', new Date(clock).toISOString());
-  store.insertEvent(user.id, 'in', new Date(clock - 6 * HOUR).toISOString());
+  store.insertEvent(user.id, 'out', new Date(clock).toISOString(), BOOT);
+  store.insertEvent(user.id, 'in', new Date(clock - 6 * HOUR).toISOString(), BOOT);
 
-  const inNow = store.getCurrentlyIn().map((u) => u.id);
+  const inNow = store.getCurrentlyIn(BOOT).map((u) => u.id);
   assert.ok(inNow.includes(user.id), 'expected the last-inserted "in" to count');
 });
 

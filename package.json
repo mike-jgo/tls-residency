@@ -9,11 +9,11 @@
     "test": "node --test"
   },
   "dependencies": {
-    "better-sqlite3": "^11.8.1",
+    "better-sqlite3": "^13.0.3",
     "dotenv": "^17.4.2",
     "express": "^4.21.2"
   },
   "allowScripts": {
-    "better-sqlite3@11.10.0": true
+    "better-sqlite3@13.0.3": true
   }
 }

@@ -2,12 +2,13 @@
 
 require('dotenv').config();
 
+const { execFile } = require('child_process');
 const express = require('express');
 const store = require('./db');
 const hours = require('./lib/hours');
 const dates = require('./lib/dates');
 const scan = require('./lib/scan');
-const reader = require('./lib/reader');
+const machine = require('./lib/machine');
 const views = require('./views');
 
 const app = express();
@@ -15,17 +16,23 @@ const PORT = Number(process.env.PORT || 3000);
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme';
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const TZ = dates.TZ; // one zone for logs, pages and report ranges alike
-const READER_DEVICE = process.env.READER_DEVICE || '';
+const BOOT_ID = machine.BOOT_ID;
 
 app.use(express.urlencoded({ extended: false }));
 
 // ---- Scan handling -------------------------------------------------------
-// Repeat-tap suppression, the stale check-in rule and the in/out toggle all
-// live in lib/scan.js, where they can be tested without starting a server.
-const scanner = scan.createScanner({ store });
+// The clock check, repeat-tap suppression, the stale check-in rule and the
+// in/out toggle all live in lib/scan.js, where they can be tested without
+// starting a server. The clock watcher starts with the server, below.
+let clock = null;
+const scanner = scan.createScanner({
+  store,
+  bootId: BOOT_ID,
+  clockReady: () => clock !== null && clock.isReady(),
+});
 
-// There is no display at the reader, so this log is the only live feedback
-// anyone gets. Under systemd, `journalctl -u attendance -f` is the day's record.
+// The tap screen is what people at the reader see; this log is the record of
+// it. Under systemd, `journalctl -u attendance -f` shows the day's taps.
 function logTime(iso) {
   return new Date(iso).toLocaleTimeString('en-PH', {
     timeZone: TZ, hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -36,6 +43,8 @@ function logScan(result) {
   const stamp = logTime(result.time || new Date().toISOString());
   if (result.status === 'unknown') {
     console.log(`${stamp}  ???   unknown card ${result.rfid}`);
+  } else if (result.status === 'clock') {
+    console.log(`${stamp}  WAIT  clock not set yet — tap not recorded (${result.rfid})`);
   } else if (result.status === 'ignored') {
     console.log(`${stamp}  ...   repeat tap ignored (${result.rfid})`);
   } else {
@@ -44,25 +53,6 @@ function logScan(result) {
     const note = result.stale ? '   (previous check-in was never closed — it counts as zero)' : '';
     console.log(`${stamp}  ${result.direction.toUpperCase().padEnd(3)}   ${result.name}${note}`);
   }
-}
-
-// ---- Card reader ---------------------------------------------------------
-// The reader is a USB keyboard. We read its raw input device rather than
-// stdin so scanning doesn't depend on a monitor, a desktop session, or a
-// logged-in tty — see lib/reader.js.
-function startReader() {
-  // Off Linux (a Mac used for development) there is no /dev/input; the reader
-  // reads keystrokes from stdin instead, so it starts without READER_DEVICE.
-  if (process.platform === 'linux' && !READER_DEVICE) {
-    console.log('  No READER_DEVICE set — admin is up, but nothing is reading cards.');
-    console.log('  Find the reader with:  ls -l /dev/input/by-id/');
-    return;
-  }
-  reader.startReader({
-    devicePath: READER_DEVICE,
-    onCard: (rfid) => logScan(scanner.handle(rfid)),
-    log: (message) => console.log(`  ${message}`),
-  });
 }
 
 // ---- Admin auth (HTTP Basic) --------------------------------------------
@@ -83,9 +73,15 @@ function requireAdmin(req, res, next) {
 
 app.use('/admin', requireAdmin);
 
+// Requests from the office computer's own browser. The tap screen and the
+// shutdown button only make sense there — nobody on the network should be
+// able to switch the machine off.
+const LOCAL_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+const isLocal = (req) => LOCAL_ADDRESSES.has(req.socket.remoteAddress);
+
 // Dashboard: who is currently in.
 app.get('/admin', (req, res) => {
-  res.send(views.dashboardPage({ currentlyIn: store.getCurrentlyIn() }));
+  res.send(views.dashboardPage({ currentlyIn: store.getCurrentlyIn(BOOT_ID), local: isLocal(req) }));
 });
 
 // People / roster.
@@ -93,7 +89,9 @@ app.get('/admin/users', (req, res) => {
   const flash = req.query.ok
     ? { type: 'ok', text: req.query.ok }
     : req.query.err ? { type: 'err', text: req.query.err } : null;
-  res.send(views.usersPage({ users: store.listUsers(), flash, unknownScans: scanner.unknownScans }));
+  res.send(views.usersPage({
+    users: store.listUsers(), flash, unknownScans: scanner.unknownScans, local: isLocal(req),
+  }));
 });
 
 // Register a person. RFID must be unique.
@@ -122,6 +120,7 @@ app.post('/admin/users', (req, res) => {
 // Remove a person (and their history).
 app.post('/admin/users/:id/delete', (req, res) => {
   store.deleteUser(Number(req.params.id));
+  showStatus(); // they may have been checked in
   res.redirect('/admin/users?ok=' + encodeURIComponent('Person removed.'));
 });
 
@@ -132,7 +131,7 @@ function buildReport(startISO, endISO) {
   let anyInvalid = false;
   const report = users.map((u) => {
     const events = store.getEventsForUser(u.id);
-    const all = hours.buildSessions(events);
+    const all = hours.buildSessions(events, { bootId: BOOT_ID });
     const inRange = hours.filterByRange(all, startISO, endISO);
     const invalid = inRange.some((s) => s.invalid);
     if (invalid) anyInvalid = true;
@@ -144,7 +143,8 @@ function buildReport(startISO, endISO) {
       sessions: inRange.filter((s) => !s.open && !s.invalid).length,
       // Only the live session means "still in". An abandoned check-in is also
       // open, but that person went home — saying they are in would be a lie
-      // that never expires.
+      // that never expires. That includes one left open at last night's
+      // shutdown, which buildSessions flags as abandoned given the boot id.
       open: inRange.some((s) => s.open && !s.invalid),
       invalid,
     };
@@ -163,7 +163,7 @@ function readRange(req) {
 app.get('/admin/hours', (req, res) => {
   const { start, end, startISO, endISO, error } = readRange(req);
   const { report, anyInvalid } = buildReport(startISO, endISO);
-  res.send(views.hoursPage({ report, start, end, invalid: anyInvalid, error }));
+  res.send(views.hoursPage({ report, start, end, invalid: anyInvalid, error, local: isLocal(req) }));
 });
 
 app.get('/admin/hours.csv', (req, res) => {
@@ -192,16 +192,110 @@ app.get('/admin/hours.csv', (req, res) => {
   res.send(lines.join('\n'));
 });
 
+// ---- Tap screen ----------------------------------------------------------
+// The monitor at the reader shows /station full-screen, and the tap screen
+// *is* the reader's input: the reader is a USB keyboard, so a tap arrives in
+// that page as a burst of digits and Enter, and the page posts the number to
+// /station/tap. Who's in the office is pushed back to it over /station/events.
+app.use('/station', (req, res, next) => {
+  if (isLocal(req)) return next();
+  res.status(403).type('text/plain').send('The tap screen only opens on the office computer itself.');
+});
+
+const stationClients = new Set();
+
+function sendEvent(res, event, data) {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+function stationStatus() {
+  return {
+    clockReady: clock !== null && clock.isReady(),
+    currentlyIn: store.getCurrentlyIn(BOOT_ID).map((u) => ({ name: u.name, since: u.since })),
+  };
+}
+
+function showStatus() {
+  if (!stationClients.size) return;
+  const status = stationStatus();
+  for (const res of stationClients) sendEvent(res, 'status', status);
+}
+
+// The page's own POSTs. The custom header is a cheap CSRF guard: a form or
+// link on some other page can't set it, and a cross-origin script can't
+// without a preflight we never answer.
+function fromTapScreen(req, res, next) {
+  if (req.get('X-Station') === '1') return next();
+  res.status(403).json({ ok: false, error: 'not from the tap screen' });
+}
+
+// Only on the Pi does the page insist that digits arrive at reader speed — see
+// stationPage. On a Mac with no reader, typing a number is how you test.
+app.get('/station', (req, res) => res.send(views.stationPage({ readerOnly: process.platform === 'linux' })));
+
+app.post('/station/tap', fromTapScreen, express.json(), (req, res) => {
+  const rfid = String((req.body && req.body.rfid) || '').trim();
+  if (!/^\d{1,64}$/.test(rfid)) return res.status(400).json({ ok: false, error: 'not a card number' });
+
+  const result = scanner.handle(rfid);
+  logScan(result);
+  if (result.status === 'ok') showStatus();
+  res.json({
+    ok: true,
+    status: result.status,
+    direction: result.direction,
+    name: result.name,
+    stale: result.stale,
+    time: result.time,
+    rfid: result.status === 'unknown' ? result.rfid : undefined,
+  });
+});
+
+app.get('/station/events', (req, res) => {
+  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+  res.flushHeaders();
+  stationClients.add(res);
+  sendEvent(res, 'status', stationStatus());
+  req.on('close', () => stationClients.delete(res));
+});
+
+// End of the day. The page has already shown who is still checked in and had
+// someone confirm; this just records who that was and powers off.
+app.post('/station/shutdown', fromTapScreen, (req, res) => {
+  const stillIn = store.getCurrentlyIn(BOOT_ID).map((u) => u.name);
+  const note = stillIn.length ? ` — still checked in, won't count: ${stillIn.join(', ')}` : '';
+  console.log(`${logTime(new Date().toISOString())}  OFF   shutting down${note}`);
+
+  if (process.platform !== 'linux') {
+    console.log('  (not on Linux — not actually shutting down)');
+    return res.json({ ok: true });
+  }
+  // Needs a sudoers rule letting the service user run exactly this — see README.
+  execFile('sudo', ['-n', '/usr/bin/systemctl', 'poweroff'], (err, stdout, stderr) => {
+    if (err) {
+      const why = String(stderr || err.message).trim();
+      console.log(`  shutdown failed: ${why}`);
+      return res.status(500).json({ ok: false, error: why });
+    }
+    res.json({ ok: true });
+  });
+});
+
 // ---- Health --------------------------------------------------------------
-app.get('/', (req, res) => res.redirect('/admin'));
+// On the office computer the front page is the tap screen; elsewhere, admin.
+app.get('/', (req, res) => res.redirect(isLocal(req) ? '/station' : '/admin'));
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => {
   console.log(`Attendance server running on http://localhost:${PORT}`);
-  console.log(`  Admin:  http://localhost:${PORT}/admin  (user: ${ADMIN_USER})`);
+  console.log(`  Tap screen:  http://localhost:${PORT}/station  (the reader types into this page)`);
+  console.log(`  Admin:       http://localhost:${PORT}/admin  (user: ${ADMIN_USER})`);
   if (ADMIN_PASSWORD === 'changeme') {
     console.log('  WARNING: using default admin password — set ADMIN_PASSWORD before deploying.');
   }
-  startReader();
+  clock = machine.watchClock({
+    onChange: showStatus,
+    log: (message) => console.log(`  ${message}`),
+  });
   console.log('');
 });
