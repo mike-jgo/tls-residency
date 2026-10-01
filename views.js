@@ -32,6 +32,51 @@ function fmtTime(iso) {
   });
 }
 
+// ---- Icons and the sync badge --------------------------------------------
+// Line icons, drawn inline so the pages need nothing from the network (the Pi
+// may have none). Each is the inside of a 24x24 stroke-only <svg>.
+const CLOUD = '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>';
+const ICONS = {
+  synced: CLOUD + '<path d="m9 14 2 2 4-4"/>',
+  pending: '<path d="M4 14.9A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.24"/><path d="M12 12v9"/><path d="m16 16-4-4-4 4"/>',
+  offline: '<path d="m2 2 20 20"/><path d="M5.78 5.78A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.31-.19"/>' +
+    '<path d="M21.53 16.5A4.5 4.5 0 0 0 17.5 10h-1.79A7 7 0 0 0 10 5.07"/>',
+  error: CLOUD + '<path d="M12 10v3"/><path d="M12 16h.01"/>',
+  off: CLOUD,
+  click: '<path d="M14 4.1 12 6"/><path d="m5.1 8-2.9-.8"/><path d="m6 12-1.9 2"/><path d="M7.2 2.2 8 5.1"/>' +
+    '<path d="M9.04 9.69a.5.5 0 0 1 .65-.65l11 4.5a.5.5 0 0 1-.07.95l-4.35 1.04a1 1 0 0 0-.74.74l-1.04 4.35a.5.5 0 0 1-.95.07z"/>',
+  alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  ban: '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
+};
+const icon = (name) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+
+// Shared by the admin pages and the tap screen.
+const BADGE_CSS = `
+  svg.ic{width:1.15em;height:1.15em;fill:none;stroke:currentColor;stroke-width:2;
+         stroke-linecap:round;stroke-linejoin:round;flex:none;vertical-align:-.2em}
+  .sync{display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border-radius:999px;
+        font-size:13px;font-weight:600;text-decoration:none;white-space:nowrap;
+        background:#eef2f7;color:var(--muted)}
+  button.sync{border:0;font-family:inherit;cursor:pointer}
+  button.sync:hover{filter:brightness(.97)}
+  .sync.synced{background:var(--in-bg);color:var(--in)}
+  .sync.pending{background:#e8f0fe;color:var(--brand)}
+  .sync.offline{background:var(--out-bg);color:var(--out)}
+  .sync.error{background:#fce8e6;color:var(--danger)}`;
+
+// The few words beside the cloud. `status` is lib/sync.js's status().
+function syncBadge(status) {
+  const n = status.pending;
+  const label = {
+    synced: 'Synced',
+    pending: n ? `Syncing · ${n}` : 'Syncing',
+    offline: n ? `Offline · ${n} saved` : 'Offline',
+    error: 'Sync error',
+  }[status.state];
+  return { state: status.state, label };
+}
+
 // `local` is true when the page is being viewed on the office computer itself,
 // which is the only place the tap screen can be opened — so only link it there.
 //
@@ -40,7 +85,8 @@ function fmtTime(iso) {
 // so an admin page left open on the monitor would silently swallow every tap.
 const IDLE_RETURN_MS = 2 * 60 * 1000;
 
-function layout(title, body, active, local) {
+function layout(title, body, active, local, sync) {
+  const badge = sync ? syncBadge(sync) : null;
   const links = [
     ['/admin', 'Dashboard'],
     ['/admin/users', 'People'],
@@ -112,6 +158,10 @@ function layout(title, body, active, local) {
           text-decoration:none;font-weight:600;font-size:14px}
   .tabs a.on{background:var(--brand);color:#fff}
   .lost{color:var(--out);font-size:13px}
+  .facts{display:flex;flex-wrap:wrap;gap:8px 28px;margin:14px 0 0;color:var(--muted)}
+  .facts b{color:var(--ink);font-variant-numeric:tabular-nums}
+  .why{margin:14px 0 0;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+  .why.error{color:var(--danger)}${BADGE_CSS}
   .caphint{color:var(--out);font-size:12px;margin:12px 0 0}
 </style>
 </head>
@@ -119,6 +169,10 @@ function layout(title, body, active, local) {
 <header><div class="bar">
   <div class="brand">${esc(ORG)} <small>residency</small></div>
   <nav>${nav}</nav>
+  ${badge ? `<form method="post" action="/admin/sync">
+    <input type="hidden" name="back" value="${active}">
+    <button class="sync ${badge.state}" type="submit" title="Sync now">${icon(badge.state)}${esc(badge.label)}</button>
+  </form>` : ''}
 </div></header>
 <main>${body}</main>
 ${local ? `<script>
@@ -140,7 +194,32 @@ ${local ? `<script>
 
 // ---- Pages ---------------------------------------------------------------
 
-function dashboardPage({ currentlyIn, local }) {
+// The sheet sync, spelled out: the one place that says what is uploaded, what
+// is waiting, and why.
+function syncPanel(sync) {
+  if (!sync) {
+    return `<div class="panel"><h2>Google Sheet</h2>
+      <span class="sync">${icon('off')}Not set up</span></div>`;
+  }
+  const badge = syncBadge(sync);
+  const hint = {
+    synced: '',
+    pending: '',
+    offline: 'No internet. Taps upload when it is back.',
+    error: sync.error ? sync.error.message : '',
+  }[sync.state];
+  return `<div class="panel"><h2>Google Sheet</h2>
+      <span class="sync ${badge.state}">${icon(badge.state)}${esc(badge.label)}</span>
+      <div class="facts">
+        <span><b>${sync.uploaded}</b> uploaded</span>
+        <span><b>${sync.pending}</b> waiting</span>
+        <span>last synced <b>${fmtDateTime(sync.lastSyncedAt)}</b></span>
+      </div>
+      ${hint ? `<p class="why ${sync.state}">${esc(hint)}</p>` : ''}
+    </div>`;
+}
+
+function dashboardPage({ currentlyIn, sync, local }) {
   const rows = currentlyIn.length
     ? currentlyIn.map((u) => `
         <tr>
@@ -160,11 +239,12 @@ function dashboardPage({ currentlyIn, local }) {
         <thead><tr><th>Name</th><th>Student ID</th><th>Checked in</th><th>Status</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
-    </div>`;
-  return layout('Dashboard', body, '/admin', local);
+    </div>
+    ${syncPanel(sync)}`;
+  return layout('Dashboard', body, '/admin', local, sync);
 }
 
-function usersPage({ users, flash, unknownScans = [], local }) {
+function usersPage({ users, flash, unknownScans = [], sync, local }) {
   const flashHtml = flash
     ? `<div class="flash ${flash.type}">${esc(flash.text)}</div>` : '';
 
@@ -283,17 +363,17 @@ function usersPage({ users, flash, unknownScans = [], local }) {
         });
       });
     </script>`;
-  return layout('People', body, '/admin/users', local);
+  return layout('People', body, '/admin/users', local, sync);
 }
 
-function hoursPage({ report, tabs = [], start, end, invalid, error, local }) {
+function hoursPage({ report, tabs = [], start, end, error, sync, local }) {
   const rows = report.length
     ? report.map((r) => `
         <tr>
           <td>${esc(r.name)}${r.uncounted.map((s) => `
-            <div class="lost">${s.outAt
-    ? `${fmtDateTime(s.inAt)} to ${fmtDateTime(s.outAt)} — longer than ${hoursLimit} hours`
-    : `${fmtDateTime(s.inAt)} — no tap out`}</div>`).join('')}</td>
+            <div class="lost" title="Counts as zero hours">${icon('ban')} ${s.outAt
+    ? `${fmtDateTime(s.inAt)} · over ${hoursLimit} h`
+    : `${fmtDateTime(s.inAt)} · no tap out`}</div>`).join('')}</td>
           <td class="mono">${esc(r.student_id || '')}</td>
           <td class="mono">${r.hours.toFixed(2)}</td>
           <td>${r.sessions}</td>
@@ -310,10 +390,6 @@ function hoursPage({ report, tabs = [], start, end, invalid, error, local }) {
   const errorHtml = error
     ? `<div class="flash err">${esc(error)} Showing every date instead.</div>` : '';
 
-  const invalidNote = invalid
-    ? `<div class="note">The sessions listed under a name count as zero hours: there
-       was no tap out before shutdown, or the session was longer than ${hoursLimit} hours.</div>` : '';
-
   const q = `start=${encodeURIComponent(start || '')}&end=${encodeURIComponent(end || '')}`;
   const body = `
     <h1>Residency hours</h1>
@@ -321,7 +397,6 @@ function hoursPage({ report, tabs = [], start, end, invalid, error, local }) {
     <div class="tabs">${tabs.map((t) => `<a href="/admin/hours?start=${t.start}&amp;end=${t.end}"${
     t.start === (start || '') && t.end === (end || '') ? ' class="on"' : ''}>${esc(t.label)}</a>`).join('')}</div>
     ${errorHtml}
-    ${invalidNote}
     <div class="panel">
       <form method="get" action="/admin/hours" class="row">
         <div><label>From</label><input type="date" name="start" value="${esc(start || '')}"></div>
@@ -337,7 +412,7 @@ function hoursPage({ report, tabs = [], start, end, invalid, error, local }) {
         <tbody>${rows}</tbody>
       </table>
     </div>`;
-  return layout('Hours', body, '/admin/hours', local);
+  return layout('Hours', body, '/admin/hours', local, sync);
 }
 
 // ---- Tap screen ----------------------------------------------------------
@@ -409,11 +484,20 @@ function stationPage({ readerOnly = true } = {}) {
   ul.people li:last-child{border-bottom:0}
   ul.people .since{color:var(--muted);font-variant-numeric:tabular-nums}
   .empty{color:var(--muted)}
-  #unfocused{display:none;background:var(--out);color:#fff;text-align:center;padding:14px;
-             font-weight:700;font-size:20px;cursor:pointer}
-  #nointernet{display:none;background:#2b3240;color:#fff;text-align:center;padding:12px;font-weight:600}
-  #nointernet small{font-weight:500;opacity:.8;font-size:inherit}
-  #offline{display:none;background:var(--danger);color:#fff;text-align:center;padding:10px;font-weight:600}
+  /* Taps can't be read: nothing else on the screen matters until it's clicked. */
+  #unfocused{position:fixed;inset:0;z-index:5;display:none;flex-direction:column;align-items:center;
+             justify-content:center;gap:20px;background:rgba(18,24,31,.9);color:#fff;
+             font-weight:700;font-size:36px;cursor:pointer}
+  #unfocused svg{width:110px;height:110px;stroke-width:1.5}
+  /* Lost the server: a toast, top centre. */
+  #offline{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:4;display:none;
+           align-items:center;gap:10px;background:var(--danger);color:#fff;padding:10px 20px;
+           border-radius:999px;font-weight:600;box-shadow:0 8px 24px rgba(18,24,31,.22)}
+  .spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;
+        border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  #sync{display:none;font-size:15px;padding:7px 14px;border:0}
+  .glyph svg{width:120px;height:120px;stroke-width:1.5;color:var(--muted)}${BADGE_CSS}
   #shut{position:fixed;inset:0;background:rgba(18,24,31,.55);display:none;align-items:center;justify-content:center}
   #shut.open{display:flex}
   .dialog{background:#fff;border-radius:var(--radius);padding:30px;width:min(560px,92vw);max-height:90vh;overflow:auto}
@@ -435,12 +519,12 @@ function stationPage({ readerOnly = true } = {}) {
 </style>
 </head>
 <body>
-<div id="unfocused">Taps can’t be read right now — click anywhere on this screen.</div>
-<div id="nointernet"></div>
-<div id="offline">Lost contact with the residency server — taps may not be recorded. Retrying…</div>
+<div id="unfocused">${icon('click')}Click to resume</div>
+<div id="offline" role="status"><span class="spin"></span>Reconnecting…</div>
 <header>
   <div class="brand">${esc(ORG)} <small>residency</small></div>
   <div id="now"></div>
+  <button type="button" id="sync" class="sync" title="Sync now"></button>
   <a href="/admin">Admin</a>
   <button type="button" id="shut-open">Shut down</button>
 </header>
@@ -457,6 +541,7 @@ function stationPage({ readerOnly = true } = {}) {
 <script>
 (function () {
   var TZ = ${JSON.stringify(TZ)};
+  var ICONS = ${JSON.stringify(ICONS)};
   var READER_ONLY = ${readerOnly ? 'true' : 'false'};
   // Longest gap between two keystrokes of one tap. Readers manage well under
   // this; nobody types that fast by hand.
@@ -518,11 +603,12 @@ function stationPage({ readerOnly = true } = {}) {
         box.appendChild(el('div', 'detail', 'Couldn’t reach the residency server. Tap again in a moment.'));
       }
     } else if (!status.clockReady) {
-      main.className = 'main bad idle';
+      main.className = 'main idle';
+      var glyph = el('div', 'glyph');
+      glyph.innerHTML = svg('clock');
+      box.appendChild(glyph);
       box.appendChild(el('div', 'big', 'Setting the clock…'));
-      box.appendChild(el('div', 'detail',
-        'Taps aren’t recorded until the time is set over wifi. ' +
-        'If this doesn’t clear within a minute or two, check the wifi connection.'));
+      box.appendChild(el('div', 'detail', 'Needs wifi. Taps start in a moment.'));
     } else {
       main.className = 'main idle';
       box.appendChild(el('div', 'big', 'Tap your card'));
@@ -550,17 +636,32 @@ function stationPage({ readerOnly = true } = {}) {
     if (!n) list.appendChild(el('li', 'empty', 'Nobody is checked in.'));
   }
 
-  // No internet. Taps still work — they are saved on this computer and go
-  // up to the sheet when the connection is back — so this informs, it doesn't
-  // alarm: a calm bar, not the red of a tap that wasn't recorded.
-  function renderInternet() {
-    var bar = document.getElementById('nointernet');
-    bar.textContent = '';
-    bar.style.display = status.offline ? 'block' : 'none';
-    if (!status.offline) return;
-    bar.appendChild(document.createTextNode('You’re offline. '));
-    bar.appendChild(el('small', null, 'Taps are saved and will sync when you’re back online.'));
+  function svg(name) {
+    return '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">' + ICONS[name] + '</svg>';
   }
+
+  // The sheet sync, as a small cloud in the header. Offline, taps still work:
+  // they are saved here and go up when the connection is back, so this
+  // informs rather than alarms.
+  function renderSync() {
+    var badge = document.getElementById('sync');
+    var s = status.sync;
+    badge.style.display = s ? 'inline-flex' : 'none';
+    if (!s) return;
+    showSync(s.state, s.label);
+  }
+  function showSync(state, label) {
+    var badge = document.getElementById('sync');
+    badge.className = 'sync ' + state;
+    badge.innerHTML = svg(state);
+    badge.appendChild(document.createTextNode(label));
+  }
+  // Clicking the cloud syncs now. The result arrives like any other change,
+  // over /station/events.
+  document.getElementById('sync').onclick = function () {
+    showSync('pending', 'Syncing');
+    fetch('/station/sync', { method: 'POST', headers: { 'X-Station': '1' } }).catch(function () {});
+  };
 
   // ---- Shut down: show who's still in, then confirm ----
   var shut = document.getElementById('shut');
@@ -670,7 +771,7 @@ function stationPage({ readerOnly = true } = {}) {
   // Keystrokes only reach this page while it has focus. If something takes
   // it — a stray click outside the browser, a system dialog — say so loudly.
   var unfocused = document.getElementById('unfocused');
-  function checkFocus() { unfocused.style.display = document.hasFocus() ? 'none' : 'block'; }
+  function checkFocus() { unfocused.style.display = document.hasFocus() ? 'none' : 'flex'; }
   window.addEventListener('focus', checkFocus);
   window.addEventListener('blur', checkFocus);
   setInterval(checkFocus, 2000);
@@ -678,10 +779,10 @@ function stationPage({ readerOnly = true } = {}) {
   // ---- Live updates from the server ----
   var es = new EventSource('/station/events');
   es.onopen = function () { document.getElementById('offline').style.display = 'none'; };
-  es.onerror = function () { if (!shuttingDown) document.getElementById('offline').style.display = 'block'; };
+  es.onerror = function () { if (!shuttingDown) document.getElementById('offline').style.display = 'flex'; };
   es.addEventListener('status', function (e) {
     status = JSON.parse(e.data);
-    renderMain(); renderSide(); renderShut(); renderInternet();
+    renderMain(); renderSide(); renderShut(); renderSync();
   });
 
   tick(); setInterval(tick, 1000);
@@ -692,4 +793,4 @@ function stationPage({ readerOnly = true } = {}) {
 </html>`;
 }
 
-module.exports = { dashboardPage, usersPage, hoursPage, stationPage };
+module.exports = { dashboardPage, usersPage, hoursPage, stationPage, syncBadge };

@@ -110,15 +110,29 @@ function requireAdmin(req, res, next) {
 
 app.use('/admin', requireAdmin);
 
+// Every admin page carries the sheet sync's state in its header; null when no
+// spreadsheet is configured.
+const syncStatus = () => (sync ? sync.status() : null);
+
 // Requests from the office computer's own browser. The tap screen and the
 // shutdown button only make sense there — nobody on the network should be
 // able to switch the machine off.
 const LOCAL_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const isLocal = (req) => LOCAL_ADDRESSES.has(req.socket.remoteAddress);
 
+// Clicking the cloud in the header: sync now, then show the page they were on
+// with the result.
+const ADMIN_PAGES = new Set(['/admin', '/admin/users', '/admin/hours']);
+app.post('/admin/sync', async (req, res) => {
+  if (sync) await sync.run();
+  res.redirect(ADMIN_PAGES.has(req.body.back) ? req.body.back : '/admin');
+});
+
 // Dashboard: who is currently in.
 app.get('/admin', (req, res) => {
-  res.send(views.dashboardPage({ currentlyIn: store.getCurrentlyIn(BOOT_ID), local: isLocal(req) }));
+  res.send(views.dashboardPage({
+    currentlyIn: store.getCurrentlyIn(BOOT_ID), sync: syncStatus(), local: isLocal(req),
+  }));
 });
 
 // People / roster.
@@ -127,7 +141,8 @@ app.get('/admin/users', (req, res) => {
     ? { type: 'ok', text: req.query.ok }
     : req.query.err ? { type: 'err', text: req.query.err } : null;
   res.send(views.usersPage({
-    users: store.listUsers(), flash, unknownScans: scanner.unknownScans, local: isLocal(req),
+    users: store.listUsers(), flash, unknownScans: scanner.unknownScans,
+    sync: syncStatus(), local: isLocal(req),
   }));
 });
 
@@ -205,8 +220,10 @@ app.get('/admin/hours', (req, res) => {
     return res.redirect(`/admin/hours?start=${tabs[1].start}&end=${tabs[1].end}`);
   }
   const { start, end, startISO, endISO, error } = readRange(req);
-  const { report, anyInvalid } = buildReport(startISO, endISO);
-  res.send(views.hoursPage({ report, tabs, start, end, invalid: anyInvalid, error, local: isLocal(req) }));
+  const { report } = buildReport(startISO, endISO);
+  res.send(views.hoursPage({
+    report, tabs, start, end, error, sync: syncStatus(), local: isLocal(req),
+  }));
 });
 
 app.get('/admin/hours.csv', (req, res) => {
@@ -254,18 +271,11 @@ function sendEvent(res, event, data) {
 function stationStatus() {
   return {
     clockReady: clock !== null && clock.isReady(),
-    // No internet: taps are still recorded here and uploaded later, and the
-    // tap screen says so. Google refusing us is a different problem — one for
-    // an admin, not for the people tapping.
-    ...offlineStatus(),
+    // Shown as a small cloud in the header. Offline, taps are still recorded
+    // here and uploaded later.
+    sync: sync ? views.syncBadge(sync.status()) : null,
     currentlyIn: store.getCurrentlyIn(BOOT_ID).map((u) => ({ name: u.name, since: u.since })),
   };
-}
-
-function offlineStatus() {
-  if (!sync) return { offline: false, pending: 0 };
-  const { error, pending } = sync.status();
-  return { offline: Boolean(error && error.offline), pending };
 }
 
 function showStatus() {
@@ -302,6 +312,13 @@ app.post('/station/tap', fromTapScreen, express.json(), (req, res) => {
     time: result.time,
     rfid: result.status === 'unknown' ? result.rfid : undefined,
   });
+});
+
+// The cloud on the tap screen. The outcome reaches the page over
+// /station/events, like every other change.
+app.post('/station/sync', fromTapScreen, (req, res) => {
+  if (sync) sync.run();
+  res.json({ ok: true });
 });
 
 app.get('/station/events', (req, res) => {

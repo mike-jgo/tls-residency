@@ -94,8 +94,7 @@ number and presses Enter. Plug it in; there is nothing to configure. Cards are r
 **only by the tap screen**, so it has to be the window with keyboard focus:
 
 - In kiosk mode it is, from boot. If something takes focus away, the tap screen
-  shows **Taps can't be read right now — click anywhere on this screen** in a
-  bar across the top.
+  dims and shows **Click to resume**.
 - An admin page opened on the Pi returns to the tap screen after two minutes
   without mouse or keyboard use, so one left open doesn't silently swallow taps.
 - The tap screen catches the reader's keystrokes before anything else on the page,
@@ -250,8 +249,8 @@ Raspberry Pi OS with the desktop, set to log in automatically (the default).
    `chromium-browser`.) Kiosk mode has no address bar; the tap screen's **Admin**
    link and the admin site's **Tap screen** link move between the two.
 
-   Check: after a reboot the tap screen should be up with no orange bar across the
-   top, and a tap should show IN.
+   Check: after a reboot the tap screen should be up, not dimmed with **Click to resume**,
+   and a tap should show IN.
 
 ## Reaching the admin site
 
@@ -338,6 +337,22 @@ are remembered in the database — through a restart or a shutdown — and go up
 next time there is a connection. A retry can't duplicate a tap: each tap has a fixed
 row in its month's log (its position among that month's taps), so sending it twice writes the same
 cells twice.
+
+### Is it syncing?
+
+A small cloud in the header of the tap screen and of every admin page says so:
+
+| Cloud | Meaning |
+|---|---|
+| **Synced** | Every tap is in the sheet |
+| **Syncing · 3** | Three taps are on their way up |
+| **Offline · 3 saved** | No internet. Taps are still recorded on the Pi and upload when it is back |
+| **Sync error** | Google refused the upload — the key, or the sheet's sharing. Needs fixing |
+
+Click the cloud to sync straight away. Admin → Dashboard has the detail: how many taps are uploaded, how many are waiting,
+when the sheet was last synced, and for an error, Google's reason. Being offline is
+only noticed when an upload is tried — a couple of seconds after a tap, then every
+minute until it works.
 
 ### Setting it up
 

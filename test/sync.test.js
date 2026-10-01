@@ -256,9 +256,11 @@ test('a failed sync is retried by itself until it works', async () => {
   const logged = [];
   const sync = syncer(sheet, at(2027, 1, 4, 10), { retryMs: 5, log: (m) => logged.push(m) });
 
+  assert.strictEqual(sync.status().state, 'pending', 'nothing uploaded yet, nothing wrong yet');
   sheet.fail = 'before';
   await sync.run();
   assert.strictEqual(sync.status().error.offline, true);
+  assert.strictEqual(sync.status().state, 'offline');
   assert.ok(sync.status().pending > 0);
 
   await until(() => sync.status().error === null && !sync.status().running);
@@ -266,6 +268,8 @@ test('a failed sync is retried by itself until it works', async () => {
   assert.deepStrictEqual(sheet.column('January 2027 Logs', 'A'), ids);
   assert.strictEqual(sync.status().pending, 0);
   assert.strictEqual(sync.status().lastSyncedAt, at(2027, 1, 4, 10));
+  assert.strictEqual(sync.status().state, 'synced');
+  assert.strictEqual(sync.status().uploaded, store.countEventsAfter(0), 'every tap is accounted for');
   assert.ok(logged.some((m) => m.includes('sheet sync failed')));
   assert.ok(logged.some((m) => m.includes('working again')));
 });
@@ -277,6 +281,7 @@ test('being refused is told apart from being offline', async () => {
   await sync.run();
   sync.stop();
   assert.strictEqual(sync.status().error.offline, false);
+  assert.strictEqual(sync.status().state, 'error');
   assert.match(sync.status().error.message, /403/);
 });
 
