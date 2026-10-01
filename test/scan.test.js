@@ -524,13 +524,81 @@ test('a stale-dated arrival still shows the person as currently in', () => {
   assert.ok(inNow.includes(user.id), 'expected the last-inserted "in" to count');
 });
 
-test('removing a person takes their events with them', () => {
+// ---- Deactivation --------------------------------------------------------
+// People are never deleted: that would take their attendance history too.
+
+test('deactivating a person keeps every one of their events', () => {
   const card = register('Wren');
   const user = store.getUserByRfid(card);
   tap(card);
-  assert.strictEqual(store.getEventsForUser(user.id).length, 1);
+  tap(card);
 
-  store.deleteUser(user.id);
-  assert.strictEqual(store.getUserByRfid(card), undefined);
+  store.setUserActive(user.id, false);
+  assert.strictEqual(store.getUserByRfid(card).active, 0);
+  assert.deepStrictEqual(store.getEventsForUser(user.id).map((e) => e.type), ['in', 'out']);
+  assert.ok(store.listUsers().some((u) => u.id === user.id), 'still listed, for the hours report');
+});
+
+test('there is no way to delete a person', () => {
+  assert.strictEqual(store.deleteUser, undefined);
+});
+
+test('a deactivated card records nothing and is not offered for registration', () => {
+  const card = register('Xavi');
+  const user = store.getUserByRfid(card);
+  store.setUserActive(user.id, false);
+
+  const result = tap(card);
+  assert.strictEqual(result.status, 'inactive');
+  assert.strictEqual(result.name, 'Xavi');
   assert.strictEqual(store.getEventsForUser(user.id).length, 0);
+  assert.ok(!scanner.unknownScans.some((u) => u.rfid === card));
+});
+
+test('someone deactivated while checked in stops showing as in', () => {
+  const card = register('Yael');
+  const user = store.getUserByRfid(card);
+  tap(card);
+  assert.ok(store.getCurrentlyIn(BOOT).some((u) => u.id === user.id));
+
+  store.setUserActive(user.id, false);
+  assert.ok(!store.getCurrentlyIn(BOOT).some((u) => u.id === user.id));
+});
+
+test('a reactivated card works again, carrying on from their history', () => {
+  const card = register('Zed');
+  const user = store.getUserByRfid(card);
+  tap(card);
+  tap(card);
+  store.setUserActive(user.id, false);
+  store.setUserActive(user.id, true);
+
+  assert.strictEqual(tap(card).direction, 'in');
+  assert.strictEqual(store.getEventsForUser(user.id).length, 3);
+});
+
+// The Pi's existing database was created before people could be deactivated.
+test('a database from before deactivation opens with everyone active', () => {
+  const Database = require('better-sqlite3');
+  const oldPath = path.join(tmp, 'old.db');
+  const old = new Database(oldPath);
+  old.exec(`
+    CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, student_id TEXT,
+      role TEXT, rfid TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL);
+    CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+      type TEXT NOT NULL CHECK (type IN ('in','out')), ts TEXT NOT NULL, boot_id TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
+    INSERT INTO users (name, rfid, created_at) VALUES ('Old Hand', '777', '2026-01-01T00:00:00.000Z');
+    INSERT INTO events (user_id, type, ts) VALUES (1, 'in', '2026-01-02T01:00:00.000Z');
+  `);
+  old.close();
+
+  const script = [
+    'process.env.DB_PATH=' + JSON.stringify(oldPath),
+    'const s=require(' + JSON.stringify(path.join(__dirname, '..', 'db.js')) + ')',
+    "const u=s.getUserByRfid('777')",
+    'console.log(JSON.stringify({active:u.active,events:s.getEventsForUser(u.id).length}))',
+  ].join(';');
+  const seen = JSON.parse(execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' }));
+  assert.deepStrictEqual(seen, { active: 1, events: 1 });
 });

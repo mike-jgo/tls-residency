@@ -3,12 +3,14 @@
 require('dotenv').config();
 
 const { execFile } = require('child_process');
+const path = require('path');
 const express = require('express');
 const store = require('./db');
 const hours = require('./lib/hours');
 const dates = require('./lib/dates');
 const scan = require('./lib/scan');
 const machine = require('./lib/machine');
+const backup = require('./lib/backup');
 const views = require('./views');
 
 const app = express();
@@ -17,6 +19,8 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme';
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const TZ = dates.TZ; // one zone for logs, pages and report ranges alike
 const BOOT_ID = machine.BOOT_ID;
+const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, 'backups');
+const BACKUP_KEEP = Number(process.env.BACKUP_KEEP || 60);
 
 app.use(express.urlencoded({ extended: false }));
 
@@ -45,6 +49,8 @@ function logScan(result) {
     console.log(`${stamp}  ???   unknown card ${result.rfid}`);
   } else if (result.status === 'clock') {
     console.log(`${stamp}  WAIT  clock not set yet — tap not recorded (${result.rfid})`);
+  } else if (result.status === 'inactive') {
+    console.log(`${stamp}  ---   deactivated card — tap not recorded (${result.name})`);
   } else if (result.status === 'ignored') {
     console.log(`${stamp}  ...   repeat tap ignored (${result.rfid})`);
   } else {
@@ -53,6 +59,16 @@ function logScan(result) {
     const note = result.stale ? '   (previous check-in was never closed — it counts as zero)' : '';
     console.log(`${stamp}  ${result.direction.toUpperCase().padEnd(3)}   ${result.name}${note}`);
   }
+}
+
+// ---- Backups -------------------------------------------------------------
+// Taken when the server starts and when Shut down is pressed — see
+// lib/backup.js. A failed backup (the USB stick isn't in) is logged and must
+// never stop the server starting or the machine shutting down.
+function backUp(when) {
+  return backup.createBackup({ source: store, dir: BACKUP_DIR, keep: BACKUP_KEEP })
+    .then((file) => console.log(`  backup (${when}): ${file}`))
+    .catch((e) => console.log(`  BACKUP FAILED (${when}): ${e.message}`));
 }
 
 // ---- Admin auth (HTTP Basic) --------------------------------------------
@@ -106,7 +122,8 @@ app.post('/admin/users', (req, res) => {
   }
   const existing = store.getUserByRfid(rfid);
   if (existing) {
-    return res.redirect('/admin/users?err=' + encodeURIComponent(`That card is already registered to ${existing.name}.`));
+    const hint = existing.active ? '' : ' They are deactivated — reactivate them instead.';
+    return res.redirect('/admin/users?err=' + encodeURIComponent(`That card is already registered to ${existing.name}.${hint}`));
   }
   try {
     store.createUser(name, studentId, role, rfid);
@@ -117,11 +134,18 @@ app.post('/admin/users', (req, res) => {
   }
 });
 
-// Remove a person (and their history).
-app.post('/admin/users/:id/delete', (req, res) => {
-  store.deleteUser(Number(req.params.id));
+// Deactivate rather than delete: the person's card stops working, but their
+// attendance history stays in the database and in the hours report.
+app.post('/admin/users/:id/deactivate', (req, res) => {
+  store.setUserActive(Number(req.params.id), false);
   showStatus(); // they may have been checked in
-  res.redirect('/admin/users?ok=' + encodeURIComponent('Person removed.'));
+  res.redirect('/admin/users?ok=' + encodeURIComponent('Person deactivated. Their history is kept.'));
+});
+
+app.post('/admin/users/:id/reactivate', (req, res) => {
+  store.setUserActive(Number(req.params.id), true);
+  showStatus();
+  res.redirect('/admin/users?ok=' + encodeURIComponent('Person reactivated.'));
 });
 
 // ---- Hours report --------------------------------------------------------
@@ -138,6 +162,7 @@ function buildReport(startISO, endISO) {
     return {
       name: u.name,
       student_id: u.student_id,
+      active: Boolean(u.active),
       hours: hours.msToHours(hours.sumMs(inRange)),
       // Discarded sessions earned nothing, so they are not sessions worked.
       sessions: inRange.filter((s) => !s.open && !s.invalid).length,
@@ -145,7 +170,7 @@ function buildReport(startISO, endISO) {
       // open, but that person went home — saying they are in would be a lie
       // that never expires. That includes one left open at last night's
       // shutdown, which buildSessions flags as abandoned given the boot id.
-      open: inRange.some((s) => s.open && !s.invalid),
+      open: Boolean(u.active) && inRange.some((s) => s.open && !s.invalid),
       invalid,
     };
   });
@@ -179,11 +204,11 @@ app.get('/admin/hours.csv', (req, res) => {
   };
   // "Not counted" travels with the numbers: a discarded session shows up as a
   // silent zero otherwise, and this is the file someone signs off residency on.
-  const lines = [['Name', 'Student ID', 'Hours', 'Sessions', 'Still in', 'Not counted'].join(',')];
+  const lines = [['Name', 'Student ID', 'Hours', 'Sessions', 'Still in', 'Not counted', 'Deactivated'].join(',')];
   for (const r of report) {
     lines.push([
       r.name, r.student_id, r.hours.toFixed(2), r.sessions,
-      r.open ? 'yes' : '', r.invalid ? 'yes' : '',
+      r.open ? 'yes' : '', r.invalid ? 'yes' : '', r.active ? '' : 'yes',
     ].map(escCsv).join(','));
   }
   const label = (start || 'all') + '_to_' + (end || 'now');
@@ -266,18 +291,21 @@ app.post('/station/shutdown', fromTapScreen, (req, res) => {
   const note = stillIn.length ? ` — still checked in, won't count: ${stillIn.join(', ')}` : '';
   console.log(`${logTime(new Date().toISOString())}  OFF   shutting down${note}`);
 
-  if (process.platform !== 'linux') {
-    console.log('  (not on Linux — not actually shutting down)');
-    return res.json({ ok: true });
-  }
-  // Needs a sudoers rule letting the service user run exactly this — see README.
-  execFile('sudo', ['-n', '/usr/bin/systemctl', 'poweroff'], (err, stdout, stderr) => {
-    if (err) {
-      const why = String(stderr || err.message).trim();
-      console.log(`  shutdown failed: ${why}`);
-      return res.status(500).json({ ok: false, error: why });
+  // The day's taps are all in; copy them before the power goes.
+  backUp('shutdown').then(() => {
+    if (process.platform !== 'linux') {
+      console.log('  (not on Linux — not actually shutting down)');
+      return res.json({ ok: true });
     }
-    res.json({ ok: true });
+    // Needs a sudoers rule letting the service user run exactly this — see README.
+    execFile('sudo', ['-n', '/usr/bin/systemctl', 'poweroff'], (err, stdout, stderr) => {
+      if (err) {
+        const why = String(stderr || err.message).trim();
+        console.log(`  shutdown failed: ${why}`);
+        return res.status(500).json({ ok: false, error: why });
+      }
+      res.json({ ok: true });
+    });
   });
 });
 
@@ -298,4 +326,5 @@ app.listen(PORT, () => {
     log: (message) => console.log(`  ${message}`),
   });
   console.log('');
+  backUp('startup');
 });

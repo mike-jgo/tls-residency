@@ -24,7 +24,8 @@ db.exec(`
     student_id  TEXT,
     role        TEXT,
     rfid        TEXT    NOT NULL UNIQUE,
-    created_at  TEXT    NOT NULL
+    created_at  TEXT    NOT NULL,
+    active      INTEGER NOT NULL DEFAULT 1
   );
 
   CREATE TABLE IF NOT EXISTS events (
@@ -46,6 +47,13 @@ if (!db.pragma('table_info(events)').some((c) => c.name === 'boot_id')) {
   db.exec('ALTER TABLE events ADD COLUMN boot_id TEXT');
 }
 
+// People are deactivated, never deleted: deleting a person would take their
+// attendance history with them. Databases from before that lack the column;
+// everyone in them is active.
+if (!db.pragma('table_info(users)').some((c) => c.name === 'active')) {
+  db.exec('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+}
+
 // ---- Prepared statements (compiled once, reused) -------------------------
 
 const stmt = {
@@ -54,7 +62,7 @@ const stmt = {
     `INSERT INTO users (name, student_id, role, rfid, created_at)
      VALUES (@name, @student_id, @role, @rfid, @created_at)`
   ),
-  deleteUser:   db.prepare('DELETE FROM users WHERE id = ?'),
+  setActive:    db.prepare('UPDATE users SET active = ? WHERE id = ?'),
   listUsers:    db.prepare('SELECT * FROM users ORDER BY name COLLATE NOCASE'),
 
   // Ordered by id, not ts. The Pi has no battery-backed clock, so after a
@@ -80,7 +88,7 @@ const stmt = {
     JOIN events e ON e.id = (
       SELECT id FROM events WHERE user_id = u.id ORDER BY id DESC LIMIT 1
     )
-    WHERE e.type = 'in' AND e.boot_id = ?
+    WHERE e.type = 'in' AND e.boot_id = ? AND u.active = 1
     ORDER BY e.ts DESC
   `),
 };
@@ -101,10 +109,14 @@ module.exports = {
     });
   },
 
-  deleteUser: (id) => stmt.deleteUser.run(id),
+  setUserActive: (id, active) => stmt.setActive.run(active ? 1 : 0, id),
 
   getLastEvent:   (userId) => stmt.lastEvent.get(userId),
   insertEvent:    (userId, type, ts, bootId = null) => stmt.insertEvent.run(userId, type, ts, bootId),
   getEventsForUser: (userId) => stmt.eventsForUser.all(userId),
   getCurrentlyIn: (bootId) => stmt.currentlyIn.all(bootId),
+
+  // SQLite's online backup: a consistent copy even while taps are being
+  // written. Resolves when the copy is complete. See lib/backup.js.
+  backup: (dest) => db.backup(dest),
 };

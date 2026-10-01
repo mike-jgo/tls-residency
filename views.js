@@ -89,6 +89,7 @@ function layout(title, body, active, local) {
   .pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600}
   .pill.in{background:var(--in-bg);color:var(--in)}
   .pill.out{background:var(--out-bg);color:var(--out)}
+  .pill.off{background:#eef2f7;color:var(--muted)}
   .empty{color:var(--muted);padding:8px 0}
   form.row{display:flex;flex-wrap:wrap;gap:12px;align-items:end}
   label{display:block;font-size:13px;color:var(--muted);margin-bottom:5px}
@@ -184,21 +185,40 @@ function usersPage({ users, flash, unknownScans = [], local }) {
     </div>`
     : '';
 
-  const rows = users.length
-    ? users.map((u) => `
+  // Deactivated people keep their history and their card number; they are
+  // listed apart so the roster is the people whose cards currently work.
+  const personRow = (u, action, label, cls) => `
         <tr>
           <td>${esc(u.name)}</td>
           <td class="mono">${esc(u.student_id || '')}</td>
           <td>${esc(u.role || '')}</td>
           <td class="mono">${esc(u.rfid)}</td>
           <td>
-            <form method="post" action="/admin/users/${u.id}/delete"
-                  class="remove-person" data-name="${esc(u.name)}">
-              <button class="btn danger" type="submit">Remove</button>
+            <form method="post" action="/admin/users/${u.id}/${action}"
+                  class="${action}-person" data-name="${esc(u.name)}">
+              <button class="btn ${cls}" type="submit">${label}</button>
             </form>
           </td>
-        </tr>`).join('')
+        </tr>`;
+  const current = users.filter((u) => u.active);
+  const inactive = users.filter((u) => !u.active);
+
+  const rows = current.length
+    ? current.map((u) => personRow(u, 'deactivate', 'Deactivate', 'danger')).join('')
     : `<tr><td colspan="5" class="empty">No one registered yet. Add your first person above.</td></tr>`;
+
+  const inactiveHtml = inactive.length
+    ? `<div class="panel">
+      <h2>Deactivated (${inactive.length})</h2>
+      <table>
+        <thead><tr><th>Name</th><th>Student ID</th><th>Role</th><th>RFID</th><th></th></tr></thead>
+        <tbody>${inactive.map((u) => personRow(u, 'reactivate', 'Reactivate', 'ghost')).join('')}</tbody>
+      </table>
+      <p class="caphint">
+        Their cards don&#39;t record taps. Their hours stay in the report.
+      </p>
+    </div>`
+    : '';
 
   const body = `
     <h1>People</h1>
@@ -226,12 +246,13 @@ function usersPage({ users, flash, unknownScans = [], local }) {
     </div>
     ${unknownHtml}
     <div class="panel">
-      <h2>Roster (${users.length})</h2>
+      <h2>Roster (${current.length})</h2>
       <table>
         <thead><tr><th>Name</th><th>Student ID</th><th>Role</th><th>RFID</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
+    ${inactiveHtml}
     <script>
       // Put the cursor in the RFID box so a tap during registration lands there.
       var rfid = document.getElementById('rfid');
@@ -246,14 +267,14 @@ function usersPage({ users, flash, unknownScans = [], local }) {
         });
       });
 
-      // Confirm removals. The name travels in a data attribute rather than an
+      // Confirm deactivations. The name travels in a data attribute rather than an
       // inline onsubmit: esc() renders an apostrophe as &#39;, the HTML parser
       // hands that back to JS as a real quote, and a name like O'Brien would
-      // then break the handler — silently deleting with no confirmation.
-      Array.prototype.forEach.call(document.querySelectorAll('.remove-person'), function (form) {
+      // then break the handler — silently deactivating with no confirmation.
+      Array.prototype.forEach.call(document.querySelectorAll('.deactivate-person'), function (form) {
         form.addEventListener('submit', function (e) {
           var name = form.getAttribute('data-name');
-          if (!confirm('Remove ' + name + '? Their scan history goes too.')) e.preventDefault();
+          if (!confirm('Deactivate ' + name + '? Their card stops working. Their hours history is kept.')) e.preventDefault();
         });
       });
     </script>`;
@@ -271,6 +292,7 @@ function hoursPage({ report, start, end, invalid, error, local }) {
           <td>
             ${r.open ? '<span class="pill in">still in</span>' : ''}
             ${r.invalid ? '<span class="pill out">a session wasn&#39;t counted</span>' : ''}
+            ${r.active ? '' : '<span class="pill off">deactivated</span>'}
           </td>
         </tr>`).join('')
     : `<tr><td colspan="5" class="empty">No hours in this range yet.</td></tr>`;
@@ -471,6 +493,10 @@ function stationPage({ readerOnly = true } = {}) {
         main.className = 'main bad';
         box.appendChild(el('div', 'big', 'Not registered'));
         box.appendChild(el('div', 'detail', 'Card ' + t.rfid + ' isn’t registered. Ask an admin to add it.'));
+      } else if (t.status === 'inactive') {
+        main.className = 'main bad';
+        box.appendChild(el('div', 'big', 'Card deactivated'));
+        box.appendChild(el('div', 'detail', 'Nothing was recorded. Ask an admin to reactivate it.'));
       } else if (t.status === 'clock') {
         main.className = 'main bad';
         box.appendChild(el('div', 'big', 'Not recorded'));

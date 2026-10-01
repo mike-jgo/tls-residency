@@ -54,8 +54,8 @@ Attendance server running on http://localhost:3000
 Open the tap screen, click on it so it has focus, and tap a card. It only opens
 from the machine the server runs on; anywhere else gets a 403. `npm test` covers
 the clock check, the in/out toggle, repeat suppression, the daily shutdown, the
-hours maths, report date handling and database persistence — none of it needs
-hardware.
+hours maths, report date handling, database persistence, deactivation, and backup
+and restore — none of it needs hardware.
 
 ### Running on a Mac (or any non-Linux machine)
 
@@ -81,6 +81,8 @@ The SQLite file (`attendance.db`) is created automatically on first run.
 | `TZ` | `Asia/Manila` | Timezone for logged times and reports |
 | `MAX_SESSION_HOURS` | `10` | The longest a session may be. Longer ones count as zero (see below) |
 | `DB_PATH` | `./attendance.db` | Where the database file lives |
+| `BACKUP_DIR` | `./backups` | Where backups are written — point it at a USB stick (see *Back up your data*) |
+| `BACKUP_KEEP` | `60` | How many backups to keep; older ones are deleted. Two are taken a day |
 
 ### The reader
 
@@ -117,6 +119,13 @@ registered*), refresh the People page, pick the number out of the **Unrecognized
 taps** list and click "Use this card". That list holds the last 20
 unrecognized cards, in memory only — it empties on restart, because it's a
 registration shortcut, not a record.
+
+**Someone leaves.** Admin → People → **Deactivate**. Their card stops working — a
+tap shows *Card deactivated* and records nothing — but every tap they ever made
+stays in the database, and they stay in the hours report and the CSV, marked
+deactivated. **Reactivate** undoes it. Nobody can be deleted: deleting a person would
+delete the hours they earned. The card number stays theirs, so it can't be
+registered to someone else.
 
 **Scanning.** One tap toggles state based on the person's last event: first tap
 checks them in, next tap checks them out, and so on. The decision is made from the
@@ -257,20 +266,51 @@ nobody on the network can switch it off.
 
 ## Back up your data
 
-Everything is in `attendance.db`, and that file lives on the Pi's SD card — it is
-the **only** copy of your attendance records, and SD cards fail. Unplugging without
+`attendance.db` lives on the Pi's SD card, and SD cards fail. Unplugging without
 shutting down is how they fail fastest, which is one reason to always use **Shut
 down**.
 
-Since the Pi is off overnight, back up when it starts instead. With a USB stick
-mounted at `/media/usb`, add this to `crontab -e`:
+The server backs the database up by itself, twice a day:
 
-```bash
-@reboot sleep 60 && sqlite3 /home/pi/tls-residency/attendance.db ".backup '/media/usb/attendance-$(date +\%F).db'"
+- when **Shut down** is pressed, before the power goes — the whole day's taps;
+- when it starts — which covers a day that ended with the plug being pulled.
+
+Each backup is a complete database named for when it was taken, such as
+`attendance-2026-10-01_183044.db`. The newest `BACKUP_KEEP` (60, about a month)
+are kept. Every backup is logged; a failed one is logged as `BACKUP FAILED` and
+never stops the server starting or the Pi shutting down — so look for that line in
+`journalctl -u attendance` now and then.
+
+**Put the backups somewhere other than the SD card.** By default they go in
+`backups/` beside the database, which protects against a damaged database or a
+mistake, but not against the card dying. With a USB stick mounted at `/media/usb`,
+set in `.env`:
+
+```
+BACKUP_DIR=/media/usb/attendance-backups
 ```
 
-Use `.backup` rather than `cp` — the database runs in WAL mode, so a plain copy can
-catch it mid-write. (The `\%` is how cron needs `%` written.)
+If the stick isn't mounted, the folder is created on the SD card instead and backups
+quietly land there — check the stick actually holds recent files.
+
+### Restoring a backup
+
+On the Pi, in the project folder:
+
+```bash
+sudo systemctl stop attendance
+npm run restore -- /media/usb/attendance-backups/attendance-2026-10-01_183044.db
+sudo systemctl start attendance
+```
+
+The restore checks the backup is an intact attendance database before touching
+anything, and refuses if the server is still running. The database it replaces is
+not deleted: it is renamed to `attendance.db.before-restore-<time>`, so restoring
+the wrong backup can be undone by restoring that file. Taps made after the backup
+was taken are not in it — they are only in the set-aside file.
+
+On a brand-new SD card: deploy as below, copy the backup onto the Pi, and run the
+same three commands.
 
 ## The clock
 

@@ -6,6 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
+    "restore": "node scripts/restore.js",
     "test": "node --test"
   },
   "dependencies": {
