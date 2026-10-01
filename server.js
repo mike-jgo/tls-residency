@@ -6,11 +6,13 @@ const { execFile } = require('child_process');
 const path = require('path');
 const express = require('express');
 const store = require('./db');
-const hours = require('./lib/hours');
+const report = require('./lib/report');
 const dates = require('./lib/dates');
 const scan = require('./lib/scan');
 const machine = require('./lib/machine');
 const backup = require('./lib/backup');
+const sheets = require('./lib/sheets');
+const { createSync } = require('./lib/sync');
 const views = require('./views');
 
 const app = express();
@@ -36,7 +38,7 @@ const scanner = scan.createScanner({
 });
 
 // The tap screen is what people at the reader see; this log is the record of
-// it. Under systemd, `journalctl -u attendance -f` shows the day's taps.
+// it. Under systemd, `journalctl -u residency -f` shows the day's taps.
 function logTime(iso) {
   return new Date(iso).toLocaleTimeString('en-PH', {
     timeZone: TZ, hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -71,6 +73,25 @@ function backUp(when) {
     .catch((e) => console.log(`  BACKUP FAILED (${when}): ${e.message}`));
 }
 
+// ---- Google Sheets sync --------------------------------------------------
+// Off unless a spreadsheet is configured. Kicked at startup, when the clock is
+// set, and whenever a tap or the roster changes — see lib/sync.js.
+const SHEETS_SPREADSHEET_ID = sheets.spreadsheetIdFrom(process.env.SHEETS_SPREADSHEET_ID);
+const sync = SHEETS_SPREADSHEET_ID
+  ? createSync({
+    store,
+    bootId: BOOT_ID,
+    client: sheets.createSheetsClient({
+      spreadsheetId: SHEETS_SPREADSHEET_ID,
+      keyFile: process.env.GOOGLE_SERVICE_ACCOUNT_KEY || path.join(__dirname, 'service-account.json'),
+    }),
+    ready: () => clock !== null && clock.isReady(),
+    log: (message) => console.log(`  ${message}`),
+    onChange: () => showStatus(), // the tap screen says when it is offline
+  })
+  : null;
+const kickSync = () => { if (sync) sync.kick(); };
+
 // ---- Admin auth (HTTP Basic) --------------------------------------------
 // The credentials ride in a header, so they are only as private as the
 // transport. Over Tailscale that's inside the WireGuard tunnel; over the plain
@@ -83,7 +104,7 @@ function requireAdmin(req, res, next) {
     const [user, pass] = Buffer.from(encoded, 'base64').toString().split(':');
     if (user === ADMIN_USER && pass === ADMIN_PASSWORD) return next();
   }
-  res.set('WWW-Authenticate', 'Basic realm="Attendance admin"');
+  res.set('WWW-Authenticate', 'Basic realm="Residency admin"');
   return res.status(401).send('Authentication required.');
 }
 
@@ -128,6 +149,7 @@ app.post('/admin/users', (req, res) => {
   try {
     store.createUser(name, studentId, role, rfid);
     scanner.forgetUnknown(rfid);
+    kickSync();
     res.redirect('/admin/users?ok=' + encodeURIComponent(`${name} registered.`));
   } catch (e) {
     res.redirect('/admin/users?err=' + encodeURIComponent('Could not save — ' + e.message));
@@ -135,47 +157,24 @@ app.post('/admin/users', (req, res) => {
 });
 
 // Deactivate rather than delete: the person's card stops working, but their
-// attendance history stays in the database and in the hours report.
+// residency history stays in the database and in the hours report.
 app.post('/admin/users/:id/deactivate', (req, res) => {
   store.setUserActive(Number(req.params.id), false);
   showStatus(); // they may have been checked in
+  kickSync();
   res.redirect('/admin/users?ok=' + encodeURIComponent('Person deactivated. Their history is kept.'));
 });
 
 app.post('/admin/users/:id/reactivate', (req, res) => {
   store.setUserActive(Number(req.params.id), true);
   showStatus();
+  kickSync();
   res.redirect('/admin/users?ok=' + encodeURIComponent('Person reactivated.'));
 });
 
 // ---- Hours report --------------------------------------------------------
-// Build each person's sessions, optionally filter to a date range, total up.
-function buildReport(startISO, endISO) {
-  const users = store.listUsers();
-  let anyInvalid = false;
-  const report = users.map((u) => {
-    const events = store.getEventsForUser(u.id);
-    const all = hours.buildSessions(events, { bootId: BOOT_ID });
-    const inRange = hours.filterByRange(all, startISO, endISO);
-    const invalid = inRange.some((s) => s.invalid);
-    if (invalid) anyInvalid = true;
-    return {
-      name: u.name,
-      student_id: u.student_id,
-      active: Boolean(u.active),
-      hours: hours.msToHours(hours.sumMs(inRange)),
-      // Discarded sessions earned nothing, so they are not sessions worked.
-      sessions: inRange.filter((s) => !s.open && !s.invalid).length,
-      // Only the live session means "still in". An abandoned check-in is also
-      // open, but that person went home — saying they are in would be a lie
-      // that never expires. That includes one left open at last night's
-      // shutdown, which buildSessions flags as abandoned given the boot id.
-      open: Boolean(u.active) && inRange.some((s) => s.open && !s.invalid),
-      invalid,
-    };
-  });
-  return { report, anyInvalid };
-}
+// Built in lib/report.js, which the sheet sync shares.
+const buildReport = (startISO, endISO) => report.buildReport(store, BOOT_ID, startISO, endISO);
 
 // Both report routes take the same two date boxes. Bounds are resolved in the
 // configured timezone and validated — see lib/dates.js.
@@ -185,10 +184,29 @@ function readRange(req) {
   return { start, end, ...dates.dayBounds(start, end) };
 }
 
+// The hours page is laid out like the spreadsheet: a tab for all time, then
+// one per month, newest first, back to the month of the first tap. A tab is
+// just a link to that month's date range.
+function monthTabs() {
+  const tabs = [{ label: 'Totals', start: '', end: '' }];
+  const now = dates.monthOf(new Date().toISOString());
+  const from = dates.monthOf(store.getFirstEventTs() || new Date().toISOString());
+  for (let { y, m } = now; y > from.y || (y === from.y && m >= from.m); m === 1 ? (y--, m = 12) : m--) {
+    const { first, last } = dates.monthDays(y, m);
+    tabs.push({ label: dates.monthTitle(y, m), start: first, end: last });
+  }
+  return tabs;
+}
+
+// Residency is graded by the month, so the page opens on the current one.
 app.get('/admin/hours', (req, res) => {
+  const tabs = monthTabs();
+  if (req.query.start === undefined && req.query.end === undefined) {
+    return res.redirect(`/admin/hours?start=${tabs[1].start}&end=${tabs[1].end}`);
+  }
   const { start, end, startISO, endISO, error } = readRange(req);
   const { report, anyInvalid } = buildReport(startISO, endISO);
-  res.send(views.hoursPage({ report, start, end, invalid: anyInvalid, error, local: isLocal(req) }));
+  res.send(views.hoursPage({ report, tabs, start, end, invalid: anyInvalid, error, local: isLocal(req) }));
 });
 
 app.get('/admin/hours.csv', (req, res) => {
@@ -236,8 +254,18 @@ function sendEvent(res, event, data) {
 function stationStatus() {
   return {
     clockReady: clock !== null && clock.isReady(),
+    // No internet: taps are still recorded here and uploaded later, and the
+    // tap screen says so. Google refusing us is a different problem — one for
+    // an admin, not for the people tapping.
+    ...offlineStatus(),
     currentlyIn: store.getCurrentlyIn(BOOT_ID).map((u) => ({ name: u.name, since: u.since })),
   };
+}
+
+function offlineStatus() {
+  if (!sync) return { offline: false, pending: 0 };
+  const { error, pending } = sync.status();
+  return { offline: Boolean(error && error.offline), pending };
 }
 
 function showStatus() {
@@ -264,7 +292,7 @@ app.post('/station/tap', fromTapScreen, express.json(), (req, res) => {
 
   const result = scanner.handle(rfid);
   logScan(result);
-  if (result.status === 'ok') showStatus();
+  if (result.status === 'ok') { showStatus(); kickSync(); }
   res.json({
     ok: true,
     status: result.status,
@@ -315,16 +343,20 @@ app.get('/', (req, res) => res.redirect(isLocal(req) ? '/station' : '/admin'));
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => {
-  console.log(`Attendance server running on http://localhost:${PORT}`);
+  console.log(`Residency server running on http://localhost:${PORT}`);
   console.log(`  Tap screen:  http://localhost:${PORT}/station  (the reader types into this page)`);
   console.log(`  Admin:       http://localhost:${PORT}/admin  (user: ${ADMIN_USER})`);
   if (ADMIN_PASSWORD === 'changeme') {
     console.log('  WARNING: using default admin password — set ADMIN_PASSWORD before deploying.');
   }
   clock = machine.watchClock({
-    onChange: showStatus,
+    onChange: () => { showStatus(); kickSync(); },
     log: (message) => console.log(`  ${message}`),
   });
   console.log('');
   backUp('startup');
+  console.log(sync
+    ? `  Sheet sync:  spreadsheet ${SHEETS_SPREADSHEET_ID}`
+    : '  Sheet sync:  off (SHEETS_SPREADSHEET_ID is not set)');
+  kickSync();
 });

@@ -9,8 +9,8 @@ const { execFileSync } = require('node:child_process');
 
 // Both modules read their configuration once at load, so pin it first: a real
 // database in a temp directory, and the same 10-hour limit the assertions use.
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'attendance-test-'));
-const DB_PATH = path.join(tmp, 'attendance.db');
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'residency-test-'));
+const DB_PATH = path.join(tmp, 'residency.db');
 process.env.DB_PATH = DB_PATH;
 process.env.MAX_SESSION_HOURS = '10';
 
@@ -525,7 +525,7 @@ test('a stale-dated arrival still shows the person as currently in', () => {
 });
 
 // ---- Deactivation --------------------------------------------------------
-// People are never deleted: that would take their attendance history too.
+// People are never deleted: that would take their residency history too.
 
 test('deactivating a person keeps every one of their events', () => {
   const card = register('Wren');

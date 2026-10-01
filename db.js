@@ -7,9 +7,9 @@
  */
 
 const Database = require('better-sqlite3');
-const path = require('path');
+const { defaultDbPath } = require('./lib/dbpath');
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'attendance.db');
+const DB_PATH = process.env.DB_PATH || defaultDbPath();
 
 const db = new Database(DB_PATH);
 // WAL mode survives crashes/power cuts more gracefully and allows the
@@ -38,6 +38,13 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_events_user_ts ON events(user_id, ts);
+
+  -- Small facts the server must remember across restarts, such as how far
+  -- the Google Sheets sync has got (lib/sync.js).
+  CREATE TABLE IF NOT EXISTS meta (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
+  );
 `);
 
 // Databases created before boot ids were recorded lack the column. Their
@@ -48,7 +55,7 @@ if (!db.pragma('table_info(events)').some((c) => c.name === 'boot_id')) {
 }
 
 // People are deactivated, never deleted: deleting a person would take their
-// attendance history with them. Databases from before that lack the column;
+// residency history with them. Databases from before that lack the column;
 // everyone in them is active.
 if (!db.pragma('table_info(users)').some((c) => c.name === 'active')) {
   db.exec('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
@@ -62,6 +69,21 @@ const stmt = {
     `INSERT INTO users (name, student_id, role, rfid, created_at)
      VALUES (@name, @student_id, @role, @rfid, @created_at)`
   ),
+  getMeta:      db.prepare('SELECT value FROM meta WHERE key = ?').pluck(),
+  setMeta:      db.prepare(
+    'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+  ),
+  // For the sheet sync: taps after a given one, oldest first, with whose they are.
+  eventsAfter:  db.prepare(`
+    SELECT e.id, e.type, e.ts, u.name, u.student_id
+    FROM events e JOIN users u ON u.id = e.user_id
+    WHERE e.id > ? ORDER BY e.id ASC LIMIT ?
+  `),
+  firstEventTs: db.prepare('SELECT MIN(ts) FROM events').pluck(),
+  countAfter:   db.prepare('SELECT COUNT(*) FROM events WHERE id > ?').pluck(),
+  countBefore:  db.prepare(
+    'SELECT COUNT(*) FROM events WHERE ts >= ? AND ts < ? AND id < ?'
+  ).pluck(),
   setActive:    db.prepare('UPDATE users SET active = ? WHERE id = ?'),
   listUsers:    db.prepare('SELECT * FROM users ORDER BY name COLLATE NOCASE'),
 
@@ -115,6 +137,14 @@ module.exports = {
   insertEvent:    (userId, type, ts, bootId = null) => stmt.insertEvent.run(userId, type, ts, bootId),
   getEventsForUser: (userId) => stmt.eventsForUser.all(userId),
   getCurrentlyIn: (bootId) => stmt.currentlyIn.all(bootId),
+
+  getFirstEventTs: () => stmt.firstEventTs.get(),
+  getMeta: (key) => stmt.getMeta.get(key),
+  setMeta: (key, value) => stmt.setMeta.run(key, value),
+  getEventsAfter:   (id, limit) => stmt.eventsAfter.all(id, limit),
+  countEventsAfter: (id) => stmt.countAfter.get(id),
+  // How many taps in [startISO, endISO) came before tap `id`.
+  countEventsBefore: (startISO, endISO, id) => stmt.countBefore.get(startISO, endISO, id),
 
   // SQLite's online backup: a consistent copy even while taps are being
   // written. Resolves when the copy is complete. See lib/backup.js.

@@ -10,7 +10,7 @@ const { execFileSync } = require('node:child_process');
 const { createBackup, listBackups, verifyBackup, restoreBackup } = require('../lib/backup');
 
 const ROOT = path.join(__dirname, '..');
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'attendance-backup-'));
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'residency-backup-'));
 
 test.after(() => {
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* ignored */ }
@@ -47,7 +47,7 @@ const freePort = () => new Promise((resolve) => {
 });
 
 test('a backup restores the database to exactly what it was', () => {
-  const dbPath = path.join(tmp, 'a', 'attendance.db');
+  const dbPath = path.join(tmp, 'a', 'residency.db');
   const dir = path.join(tmp, 'a', 'backups');
   fs.mkdirSync(path.dirname(dbPath));
 
@@ -70,7 +70,7 @@ test('a backup restores the database to exactly what it was', () => {
 });
 
 test('the database being replaced is set aside, not deleted', () => {
-  const dbPath = path.join(tmp, 'b', 'attendance.db');
+  const dbPath = path.join(tmp, 'b', 'residency.db');
   const dir = path.join(tmp, 'b', 'backups');
   fs.mkdirSync(path.dirname(dbPath));
 
@@ -86,7 +86,7 @@ test('the database being replaced is set aside, not deleted', () => {
 });
 
 test('a damaged backup is refused and the database is left alone', () => {
-  const dbPath = path.join(tmp, 'c', 'attendance.db');
+  const dbPath = path.join(tmp, 'c', 'residency.db');
   fs.mkdirSync(path.dirname(dbPath));
   inServer(dbPath, seed);
   const before = snapshot(dbPath);
@@ -102,7 +102,7 @@ test('a damaged backup is refused and the database is left alone', () => {
 });
 
 test('a backup is a complete database while the server still has it open', () => {
-  const dbPath = path.join(tmp, 'd', 'attendance.db');
+  const dbPath = path.join(tmp, 'd', 'residency.db');
   const dir = path.join(tmp, 'd', 'backups');
   fs.mkdirSync(path.dirname(dbPath));
   const backup = inServer(dbPath,
@@ -119,9 +119,9 @@ test('only the newest backups are kept', async () => {
     at += 24 * 3_600_000;
   }
   assert.deepStrictEqual(listBackups(dir), [
-    'attendance-2026-01-07_090000.db',
-    'attendance-2026-01-08_090000.db',
-    'attendance-2026-01-09_090000.db',
+    'residency-2026-01-07_090000.db',
+    'residency-2026-01-08_090000.db',
+    'residency-2026-01-09_090000.db',
   ]);
 });
 
@@ -136,7 +136,7 @@ test('a backup that fails part-way leaves nothing that looks like a backup', asy
 
 // The procedure in the README, run the way an admin would run it.
 test('npm run restore puts a backup back, and refuses a bad file', async () => {
-  const dbPath = path.join(tmp, 'g', 'attendance.db');
+  const dbPath = path.join(tmp, 'g', 'residency.db');
   const dir = path.join(tmp, 'g', 'backups');
   fs.mkdirSync(path.dirname(dbPath));
   const backup = inServer(dbPath,
@@ -159,7 +159,7 @@ test('npm run restore puts a backup back, and refuses a bad file', async () => {
 test('npm run restore refuses while the server is running', async () => {
   const srv = require('node:http').createServer((req, res) => res.end('{"ok":true}'));
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
-  const dbPath = path.join(tmp, 'h', 'attendance.db');
+  const dbPath = path.join(tmp, 'h', 'residency.db');
   const env = { ...process.env, DB_PATH: dbPath, PORT: String(srv.address().port) };
   const { spawn } = require('node:child_process');
   const child = spawn(process.execPath, [path.join(ROOT, 'scripts', 'restore.js'), 'any.db'], { env });
@@ -170,4 +170,31 @@ test('npm run restore refuses while the server is running', async () => {
   assert.strictEqual(code, 1);
   assert.match(err, /Stop it first/);
   assert.ok(!fs.existsSync(dbPath));
+});
+
+// The database file used to be attendance.db. An existing install must keep
+// its records, not start again with an empty file under the new name.
+test('a database under the old name is carried over to the new one', () => {
+  const { defaultDbPath } = require('../lib/dbpath');
+  const dir = path.join(tmp, 'rename');
+  fs.mkdirSync(dir);
+  for (const suffix of ['', '-wal']) fs.writeFileSync(path.join(dir, 'attendance.db' + suffix), 'old' + suffix);
+
+  assert.strictEqual(defaultDbPath(dir), path.join(dir, 'residency.db'));
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'residency.db'), 'utf8'), 'old');
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'residency.db-wal'), 'utf8'), 'old-wal');
+  assert.ok(!fs.existsSync(path.join(dir, 'attendance.db')));
+
+  // Once there is a residency.db, an attendance.db is never moved over it.
+  fs.writeFileSync(path.join(dir, 'attendance.db'), 'stray');
+  defaultDbPath(dir);
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'residency.db'), 'utf8'), 'old');
+});
+
+test('backups made under the old name are still listed', () => {
+  const dir = path.join(tmp, 'oldnames');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'attendance-2026-10-01_183044.db'), 'x');
+  fs.writeFileSync(path.join(dir, 'residency-2026-10-02_183044.db'), 'x');
+  assert.deepStrictEqual(listBackups(dir), ['attendance-2026-10-01_183044.db', 'residency-2026-10-02_183044.db']);
 });

@@ -1,4 +1,4 @@
-# TLS Office Attendance
+# TLS Office Residency
 
 RFID residency-hours tracker for a school media organization. A USB RFID reader
 plugs into a Raspberry Pi in the office, with a monitor, keyboard and mouse. The Pi
@@ -17,7 +17,7 @@ Pi (office, monitor + keyboard + mouse)
 │  Chromium, full-screen ─► /station (tap screen)  │
 │        │ POST /station/tap                       │
 │        ▼                                         │
-│  server.js ─► attendance.db                      │
+│  server.js ─► residency.db                      │
 │     │    └──► console log (journalctl)           │
 │     └► /admin  (password-protected)              │
 └──────────────────────────────────────────────────┘
@@ -42,7 +42,7 @@ npm start
 ```
 
 ```
-Attendance server running on http://localhost:3000
+Residency server running on http://localhost:3000
   Tap screen:  http://localhost:3000/station  (the reader types into this page)
   Admin:       http://localhost:3000/admin  (user: admin)
 
@@ -55,7 +55,8 @@ Open the tap screen, click on it so it has focus, and tap a card. It only opens
 from the machine the server runs on; anywhere else gets a 403. `npm test` covers
 the clock check, the in/out toggle, repeat suppression, the daily shutdown, the
 hours maths, report date handling, database persistence, deactivation, and backup
-and restore — none of it needs hardware.
+and restore, and the Google Sheets sync (against a stand-in for Google) — none of
+it needs hardware or a network.
 
 ### Running on a Mac (or any non-Linux machine)
 
@@ -68,7 +69,7 @@ Off Linux there is also no clock check, each run of the server counts as a fresh
 (so a check-in left open when you stop it is abandoned, as it would be overnight on
 the Pi), and **Shut down** only logs — it doesn't switch your laptop off.
 
-The SQLite file (`attendance.db`) is created automatically on first run.
+The SQLite file (`residency.db`) is created automatically on first run.
 
 ## Configuration (`.env`)
 
@@ -80,8 +81,10 @@ The SQLite file (`attendance.db`) is created automatically on first run.
 | `ORG_NAME` | `TLS` | Shown in the admin header |
 | `TZ` | `Asia/Manila` | Timezone for logged times and reports |
 | `MAX_SESSION_HOURS` | `10` | The longest a session may be. Longer ones count as zero (see below) |
-| `DB_PATH` | `./attendance.db` | Where the database file lives |
+| `DB_PATH` | `./residency.db` | Where the database file lives |
 | `BACKUP_DIR` | `./backups` | Where backups are written — point it at a USB stick (see *Back up your data*) |
+| `SHEETS_SPREADSHEET_ID` | *(unset)* | The spreadsheet to publish to. Unset = no sync (see *Google Sheets*) |
+| `GOOGLE_SERVICE_ACCOUNT_KEY` | `./service-account.json` | The service account's key file |
 | `BACKUP_KEEP` | `60` | How many backups to keep; older ones are deleted. Two are taken a day |
 
 ### The reader
@@ -148,7 +151,7 @@ updates live — anyone who taps out while it's open drops off it. If nobody is 
 it just asks to confirm; otherwise the button reads **Shut down anyway**, because
 those people will lose today's session (see below). Who was still in at shutdown is
 written to the log. Use this button rather than the desktop's own shutdown menu,
-which knows nothing about attendance.
+which knows nothing about residency.
 
 **Forgotten check-outs.** Someone taps in and goes home without tapping out. Two
 things would go wrong on their own:
@@ -197,7 +200,7 @@ Raspberry Pi OS with the desktop, set to log in automatically (the default).
    clock — see *The clock* below.
 4. **Let the server switch the Pi off.** The Shut down button runs
    `sudo -n /usr/bin/systemctl poweroff`. Allow exactly that, and nothing else,
-   with `sudo visudo -f /etc/sudoers.d/attendance-poweroff`:
+   with `sudo visudo -f /etc/sudoers.d/residency-poweroff`:
 
    ```
    pi ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff
@@ -206,11 +209,11 @@ Raspberry Pi OS with the desktop, set to log in automatically (the default).
    (Use the account the service runs as, if it isn't `pi`.) Without this the button
    shows *Couldn't shut down* and the log says why.
 5. Install a systemd service so the server starts at boot and restarts on failure.
-   Put this in `/etc/systemd/system/attendance.service`:
+   Put this in `/etc/systemd/system/residency.service`:
 
    ```ini
    [Unit]
-   Description=TLS attendance
+   Description=TLS residency
    After=network.target
 
    [Service]
@@ -228,17 +231,17 @@ Raspberry Pi OS with the desktop, set to log in automatically (the default).
    `ExecStart` path. Then:
 
    ```bash
-   sudo systemctl enable --now attendance
-   journalctl -u attendance -f
+   sudo systemctl enable --now residency
+   journalctl -u residency -f
    ```
 
 6. **Open the tap screen at login.** Create
-   `~/.config/autostart/attendance-station.desktop`:
+   `~/.config/autostart/residency-station.desktop`:
 
    ```ini
    [Desktop Entry]
    Type=Application
-   Name=Attendance tap screen
+   Name=Residency tap screen
    Exec=sh -c 'until curl -sf http://localhost:3000/healthz >/dev/null; do sleep 1; done; chromium-browser --kiosk --noerrdialogs --disable-session-crashed-bubble http://localhost:3000/station'
    ```
 
@@ -266,7 +269,7 @@ nobody on the network can switch it off.
 
 ## Back up your data
 
-`attendance.db` lives on the Pi's SD card, and SD cards fail. Unplugging without
+`residency.db` lives on the Pi's SD card, and SD cards fail. Unplugging without
 shutting down is how they fail fastest, which is one reason to always use **Shut
 down**.
 
@@ -276,10 +279,10 @@ The server backs the database up by itself, twice a day:
 - when it starts — which covers a day that ended with the plug being pulled.
 
 Each backup is a complete database named for when it was taken, such as
-`attendance-2026-10-01_183044.db`. The newest `BACKUP_KEEP` (60, about a month)
+`residency-2026-10-01_183044.db`. The newest `BACKUP_KEEP` (60, about a month)
 are kept. Every backup is logged; a failed one is logged as `BACKUP FAILED` and
 never stops the server starting or the Pi shutting down — so look for that line in
-`journalctl -u attendance` now and then.
+`journalctl -u residency` now and then.
 
 **Put the backups somewhere other than the SD card.** By default they go in
 `backups/` beside the database, which protects against a damaged database or a
@@ -287,7 +290,7 @@ mistake, but not against the card dying. With a USB stick mounted at `/media/usb
 set in `.env`:
 
 ```
-BACKUP_DIR=/media/usb/attendance-backups
+BACKUP_DIR=/media/usb/residency-backups
 ```
 
 If the stick isn't mounted, the folder is created on the SD card instead and backups
@@ -298,19 +301,72 @@ quietly land there — check the stick actually holds recent files.
 On the Pi, in the project folder:
 
 ```bash
-sudo systemctl stop attendance
-npm run restore -- /media/usb/attendance-backups/attendance-2026-10-01_183044.db
-sudo systemctl start attendance
+sudo systemctl stop residency
+npm run restore -- /media/usb/residency-backups/residency-2026-10-01_183044.db
+sudo systemctl start residency
 ```
 
-The restore checks the backup is an intact attendance database before touching
+The restore checks the backup is an intact residency database before touching
 anything, and refuses if the server is still running. The database it replaces is
-not deleted: it is renamed to `attendance.db.before-restore-<time>`, so restoring
+not deleted: it is renamed to `residency.db.before-restore-<time>`, so restoring
 the wrong backup can be undone by restoring that file. Taps made after the backup
 was taken are not in it — they are only in the set-aside file.
 
 On a brand-new SD card: deploy as below, copy the backup onto the Pi, and run the
 same three commands.
+
+## Google Sheets
+
+Optional. The Pi can publish residency to a Google spreadsheet, so hours can be
+read without the Pi being on. It is one-way: the database stays the record, the
+sheet is a copy, and nothing typed into the sheet comes back.
+
+The spreadsheet gets:
+
+- **A tab per month** — `October 2026`, `November 2026`, … — with each person's
+  hours for that month.
+- **A log tab per month** — `October 2026 Logs`, … — with every tap that month,
+  one per row.
+- **A `Totals` tab** — when the sheet was last synced, and all-time hours.
+
+Tabs are created as needed. Don't type in them or re-sort them — the next sync
+writes over its own cells. Add your own tabs for anything else.
+
+The sync runs when the server starts, and a couple of seconds after any tap or
+roster change. With no internet it retries every minute, and taps not yet uploaded
+are remembered in the database — through a restart or a shutdown — and go up the
+next time there is a connection. A retry can't duplicate a tap: each tap has a fixed
+row in its month's log (its position among that month's taps), so sending it twice writes the same
+cells twice.
+
+### Setting it up
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), create a
+   project, and enable the **Google Sheets API** for it.
+2. *IAM & Admin → Service Accounts → Create service account.* It needs no roles.
+   Open it, *Keys → Add key → JSON*, and save the downloaded file on the Pi as
+   `service-account.json` in the project folder. Treat it like a password.
+3. Create the spreadsheet and **share it with the service account's email
+   address** (it ends in `iam.gserviceaccount.com`) as **Editor**.
+4. Put the spreadsheet's ID in `.env` — the long part of its address,
+   `docs.google.com/spreadsheets/d/<ID>/edit`:
+
+   ```
+   SHEETS_SPREADSHEET_ID=<ID>
+   ```
+
+5. Restart the server. The log says `Sheet sync:  spreadsheet <ID>`, and
+   `sheet sync failed: …` with Google's reason if something is wrong — most often
+   the sheet not being shared with the service account.
+
+The first sync uploads the whole history. Pointing `SHEETS_SPREADSHEET_ID` at a
+different spreadsheet does the same there.
+
+After **restoring a backup**, the sheet may still show taps made after that backup
+was taken. They are overwritten as new taps arrive; to start clean, delete the month
+tabs concerned and point the server at the spreadsheet again by clearing the mark:
+`sqlite3 residency.db "DELETE FROM meta WHERE key='sync_spreadsheet'"` (server
+stopped).
 
 ## The clock
 

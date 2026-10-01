@@ -57,7 +57,7 @@ function layout(title, body, active, local) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} · ${esc(ORG)} attendance</title>
+<title>${esc(title)} · ${esc(ORG)} residency</title>
 <style>
   :root{
     --ink:#12181f; --panel:#ffffff; --line:#e3e8ee; --muted:#647082;
@@ -107,12 +107,17 @@ function layout(title, body, active, local) {
   .flash.ok{background:var(--in-bg);color:var(--in)}
   .flash.err{background:#fce8e6;color:var(--danger)}
   .scanbox{font-size:15px}
+  .tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px}
+  .tabs a{padding:7px 14px;border-radius:8px;background:#eef2f7;color:var(--ink);
+          text-decoration:none;font-weight:600;font-size:14px}
+  .tabs a.on{background:var(--brand);color:#fff}
+  .lost{color:var(--out);font-size:13px}
   .caphint{color:var(--out);font-size:12px;margin:12px 0 0}
 </style>
 </head>
 <body>
 <header><div class="bar">
-  <div class="brand">${esc(ORG)} <small>attendance</small></div>
+  <div class="brand">${esc(ORG)} <small>residency</small></div>
   <nav>${nav}</nav>
 </div></header>
 <main>${body}</main>
@@ -281,37 +286,40 @@ function usersPage({ users, flash, unknownScans = [], local }) {
   return layout('People', body, '/admin/users', local);
 }
 
-function hoursPage({ report, start, end, invalid, error, local }) {
+function hoursPage({ report, tabs = [], start, end, invalid, error, local }) {
   const rows = report.length
     ? report.map((r) => `
         <tr>
-          <td>${esc(r.name)}</td>
+          <td>${esc(r.name)}${r.uncounted.map((s) => `
+            <div class="lost">${s.outAt
+    ? `${fmtDateTime(s.inAt)} to ${fmtDateTime(s.outAt)} — longer than ${hoursLimit} hours`
+    : `${fmtDateTime(s.inAt)} — no tap out`}</div>`).join('')}</td>
           <td class="mono">${esc(r.student_id || '')}</td>
           <td class="mono">${r.hours.toFixed(2)}</td>
           <td>${r.sessions}</td>
           <td>
             ${r.open ? '<span class="pill in">still in</span>' : ''}
-            ${r.invalid ? '<span class="pill out">a session wasn&#39;t counted</span>' : ''}
+            ${r.uncounted.length ? `<span class="pill out">${r.uncounted.length} not counted</span>` : ''}
             ${r.active ? '' : '<span class="pill off">deactivated</span>'}
           </td>
         </tr>`).join('')
     : `<tr><td colspan="5" class="empty">No hours in this range yet.</td></tr>`;
 
-  // A bad date range is the admin's typo, not a fact about attendance — say so
+  // A bad date range is the admin's typo, not a fact about residency — say so
   // above the table, and be explicit that the numbers below ignore it.
   const errorHtml = error
     ? `<div class="flash err">${esc(error)} Showing every date instead.</div>` : '';
 
   const invalidNote = invalid
-    ? `<div class="note">Some sessions weren't counted. A session only counts if
-       it is closed by a tap out within ${hoursLimit} hours, before the office computer
-       is shut down for the day — someone who taps in and never taps out loses that
-       session. The names are flagged below.</div>` : '';
+    ? `<div class="note">The sessions listed under a name count as zero hours: there
+       was no tap out before shutdown, or the session was longer than ${hoursLimit} hours.</div>` : '';
 
   const q = `start=${encodeURIComponent(start || '')}&end=${encodeURIComponent(end || '')}`;
   const body = `
     <h1>Residency hours</h1>
     <p class="sub">Total time each person has logged.</p>
+    <div class="tabs">${tabs.map((t) => `<a href="/admin/hours?start=${t.start}&amp;end=${t.end}"${
+    t.start === (start || '') && t.end === (end || '') ? ' class="on"' : ''}>${esc(t.label)}</a>`).join('')}</div>
     ${errorHtml}
     ${invalidNote}
     <div class="panel">
@@ -360,7 +368,7 @@ function stationPage({ readerOnly = true } = {}) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tap screen · ${esc(ORG)} attendance</title>
+<title>Tap screen · ${esc(ORG)} residency</title>
 <style>
   :root{
     --ink:#12181f; --panel:#ffffff; --line:#e3e8ee; --muted:#647082; --bg:#f5f7fa;
@@ -403,6 +411,8 @@ function stationPage({ readerOnly = true } = {}) {
   .empty{color:var(--muted)}
   #unfocused{display:none;background:var(--out);color:#fff;text-align:center;padding:14px;
              font-weight:700;font-size:20px;cursor:pointer}
+  #nointernet{display:none;background:#2b3240;color:#fff;text-align:center;padding:12px;font-weight:600}
+  #nointernet small{font-weight:500;opacity:.8;font-size:inherit}
   #offline{display:none;background:var(--danger);color:#fff;text-align:center;padding:10px;font-weight:600}
   #shut{position:fixed;inset:0;background:rgba(18,24,31,.55);display:none;align-items:center;justify-content:center}
   #shut.open{display:flex}
@@ -426,9 +436,10 @@ function stationPage({ readerOnly = true } = {}) {
 </head>
 <body>
 <div id="unfocused">Taps can’t be read right now — click anywhere on this screen.</div>
-<div id="offline">Lost contact with the attendance server — taps may not be recorded. Retrying…</div>
+<div id="nointernet"></div>
+<div id="offline">Lost contact with the residency server — taps may not be recorded. Retrying…</div>
 <header>
-  <div class="brand">${esc(ORG)} <small>attendance</small></div>
+  <div class="brand">${esc(ORG)} <small>residency</small></div>
   <div id="now"></div>
   <a href="/admin">Admin</a>
   <button type="button" id="shut-open">Shut down</button>
@@ -504,7 +515,7 @@ function stationPage({ readerOnly = true } = {}) {
       } else {
         main.className = 'main bad';
         box.appendChild(el('div', 'big', 'Not recorded'));
-        box.appendChild(el('div', 'detail', 'Couldn’t reach the attendance server. Tap again in a moment.'));
+        box.appendChild(el('div', 'detail', 'Couldn’t reach the residency server. Tap again in a moment.'));
       }
     } else if (!status.clockReady) {
       main.className = 'main bad idle';
@@ -537,6 +548,18 @@ function stationPage({ readerOnly = true } = {}) {
     document.getElementById('in-title').textContent = 'In the office (' + n + ')';
     var list = peopleList(document.getElementById('in-list'));
     if (!n) list.appendChild(el('li', 'empty', 'Nobody is checked in.'));
+  }
+
+  // No internet. Taps still work — they are saved on this computer and go
+  // up to the sheet when the connection is back — so this informs, it doesn't
+  // alarm: a calm bar, not the red of a tap that wasn't recorded.
+  function renderInternet() {
+    var bar = document.getElementById('nointernet');
+    bar.textContent = '';
+    bar.style.display = status.offline ? 'block' : 'none';
+    if (!status.offline) return;
+    bar.appendChild(document.createTextNode('You’re offline. '));
+    bar.appendChild(el('small', null, 'Taps are saved and will sync when you’re back online.'));
   }
 
   // ---- Shut down: show who's still in, then confirm ----
@@ -658,7 +681,7 @@ function stationPage({ readerOnly = true } = {}) {
   es.onerror = function () { if (!shuttingDown) document.getElementById('offline').style.display = 'block'; };
   es.addEventListener('status', function (e) {
     status = JSON.parse(e.data);
-    renderMain(); renderSide(); renderShut();
+    renderMain(); renderSide(); renderShut(); renderInternet();
   });
 
   tick(); setInterval(tick, 1000);

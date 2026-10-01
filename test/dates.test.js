@@ -103,3 +103,9 @@ test('bounds come from the configured zone, not the host default', () => {
   }).trim();
   assert.strictEqual(out, 'UTC 2026-01-05T00:00:00.000Z');
 });
+
+test('the days of a month are the local month\'s first and last', () => {
+  assert.deepStrictEqual(dates.monthDays(2026, 10), { first: '2026-10-01', last: '2026-10-31' });
+  assert.deepStrictEqual(dates.monthDays(2026, 2), { first: '2026-02-01', last: '2026-02-28' });
+  assert.deepStrictEqual(dates.monthDays(2028, 2), { first: '2028-02-01', last: '2028-02-29' });
+});

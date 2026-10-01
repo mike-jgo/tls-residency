@@ -9,3 +9,8 @@ node_modules/
 *.db-wal
 *.before-restore-*
 backups/
+
+# Google service account key
+service-account*.json
+tls-residency-*.json
+*.before-reset-*
