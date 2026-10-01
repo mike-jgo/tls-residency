@@ -392,3 +392,23 @@ test('a roster change reaches earlier months too', async () => {
   await until(() => sheet.cell('August 2027', 'G' + row) === 'yes');
   sync.stop();
 });
+
+// A backup from before someone was registered has a shorter roster. The
+// rewritten Totals table only reaches as far as the restored roster, so
+// whoever was below that must be cleared, not left with their hours.
+test('starting from the top removes people the database no longer has from Totals', async () => {
+  const sheet = fakeSheet();
+  await syncer(sheet, at(2027, 10, 1, 9)).syncOnce();
+  const totals = sheet.tabs.get('Totals');
+  const below = sheet.column('Totals', 'A').length + 2; // first row past the table
+  totals.set('A' + below, 'Obsolete Person').set('C' + below, 12).set('D' + below, 3);
+
+  store.setMeta('sync_spreadsheet', ''); // what restoreBackup leaves
+  await syncer(sheet, at(2027, 10, 1, 10)).syncOnce();
+
+  assert.ok(!sheet.column('Totals', 'A').includes('Obsolete Person'));
+  assert.strictEqual(sheet.cell('Totals', 'C' + below), undefined, 'their hours went with them');
+  assert.strictEqual(sheet.cell('Totals', 'A1'), 'Last synced');
+  assert.strictEqual(sheet.cell('Totals', 'A3'), 'Name');
+  assert.strictEqual(sheet.column('Totals', 'A').length, 2 + store.listUsers().length, 'the table is whole again');
+});
