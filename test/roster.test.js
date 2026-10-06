@@ -130,6 +130,25 @@ test('a card still held here by someone the tab does not list is not handed on',
   assert.deepStrictEqual(both.deactivate, [], 'and Ben is not taken for deleted');
 });
 
+// Ana is given Ben's card and Ben is given Cy's — but Cy is not in the tab, so
+// Ben keeps his, so Ana can't have it. Moving Ana anyway would put one card on
+// two people, which the database refuses, failing every sync after it.
+test('a card is not handed on when its holder, in turn, cannot move off it', () => {
+  const CY = ['Cy Lim', '333', 'Photo', 'EB', '@cy', '', '9003'];
+  const users = [user(ANA), user(BEN), user(CY)];
+  const plan = pull(users, [HEADER, edit(ANA, { 6: '9002' }), edit(BEN, { 6: '9003' })]);
+  assert.deepStrictEqual(plan.update, []);
+  assert.deepStrictEqual(plan.create, []);
+  assert.deepStrictEqual(plan.deactivate, [], 'nobody a skipped row is about is taken for deleted');
+  assert.strictEqual(plan.warnings.length, 2);
+  assert.match(plan.warnings[0], /Row 3 \(Ben Dy\): card number 9003 belongs to Cy Lim/);
+  assert.match(plan.warnings[1], /Row 2 \(Ana Cruz\): card number 9002 belongs to Ben Dy/);
+
+  // The rest of the tab still goes through.
+  const rest = pull(users, [HEADER, edit(ANA, { 6: '9002' }), edit(BEN, { 6: '9003' }), edit(CY, { 0: 'Cy Lim Jr', 6: '9004' })]);
+  assert.deepStrictEqual(rest.update.map((u) => u.rfid), ['9002', '9003', '9004'], 'a chain that ends on a free card moves');
+});
+
 test('a row with no card for someone not here waits for one', () => {
   const plan = pull([], [HEADER, edit(ANA, { 6: '' })]);
   assert.deepStrictEqual(plan.create, []);

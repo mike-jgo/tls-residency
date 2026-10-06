@@ -271,10 +271,11 @@ On the Pi itself, click **Admin** on the tap screen. From another device on the
 office network, use the Pi's address: `http://<pi-ip>:3000/admin` — only while the
 Pi is switched on, of course.
 
-The admin login uses HTTP Basic auth, which isn't encrypted on the office network,
-so don't reuse a password that matters elsewhere. The browser also remembers the
-login until it closes — on the Pi, that's until shutdown — so anyone at the monitor
-can reach the admin site for the rest of the day once someone has logged in there.
+The admin site has its own sign-in page. The password crosses the office network
+unencrypted, so don't reuse one that matters elsewhere. Being signed in ends when
+you press **Sign out**, after 30 minutes without use, when the server restarts —
+and, on the Pi, as soon as the screen goes back to the tap screen, so the next
+person at the monitor has to sign in again.
 
 The tap screen and the shutdown button only answer requests from the Pi itself;
 nobody on the network can switch it off.

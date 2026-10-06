@@ -12,6 +12,8 @@ const scan = require('./lib/scan');
 const people = require('./lib/people');
 const roster = require('./lib/roster');
 const machine = require('./lib/machine');
+const guard = require('./lib/guard');
+const { createAuth } = require('./lib/auth');
 const backup = require('./lib/backup');
 const sheets = require('./lib/sheets');
 const { createSync } = require('./lib/sync');
@@ -27,6 +29,14 @@ const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, 'backups');
 const BACKUP_KEEP = Number(process.env.BACKUP_KEEP || 60);
 
 app.use(express.urlencoded({ extended: false }));
+
+// Nothing here is changed by a form or script on some other website — see
+// sameOrigin in lib/guard.js. Every POST goes through this, the tap screen's
+// included (which keeps its own X-Station check as well).
+app.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || guard.sameOrigin(req.headers)) return next();
+  res.status(403).type('text/plain').send('That request came from another website, so nothing was changed.');
+});
 
 // ---- Scan handling -------------------------------------------------------
 // The clock check, repeat-tap suppression, the stale check-in rule and the
@@ -94,23 +104,27 @@ const sync = SHEETS_SPREADSHEET_ID
   : null;
 const kickSync = (rosterChanged) => { if (sync) sync.kick(rosterChanged); };
 
-// ---- Admin auth (HTTP Basic) --------------------------------------------
-// The credentials ride in a header, so they are only as private as the
-// transport. Over Tailscale that's inside the WireGuard tunnel; over the plain
-// office LAN it is clear text — hence the README's warning not to reuse a
-// password that matters elsewhere.
-function requireAdmin(req, res, next) {
-  const header = req.headers.authorization || '';
-  const [scheme, encoded] = header.split(' ');
-  if (scheme === 'Basic' && encoded) {
-    const [user, pass] = Buffer.from(encoded, 'base64').toString().split(':');
-    if (user === ADMIN_USER && pass === ADMIN_PASSWORD) return next();
+// ---- Admin login --------------------------------------------------------
+const auth = createAuth({ user: ADMIN_USER, password: ADMIN_PASSWORD });
+app.use('/admin', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+app.get('/admin/login', (req, res) => {
+  res.send(views.loginPage({ local: isLocal(req) }));
+});
+app.post('/admin/login', (req, res) => {
+  if (!auth.login(req, res, req.body.username, req.body.password)) {
+    return res.status(401).send(views.loginPage({ local: isLocal(req), error: 'Username or password is incorrect. Try again.' }));
   }
-  res.set('WWW-Authenticate', 'Basic realm="Staffer Attendance Monitoring System admin"');
-  return res.status(401).send('Authentication required.');
-}
-
-app.use('/admin', requireAdmin);
+  res.redirect('/admin');
+});
+app.post('/admin/logout', (req, res) => {
+  auth.logout(req, res);
+  res.redirect(isLocal(req) ? '/station' : '/admin/login');
+});
+app.use('/admin', (req, res, next) => {
+  if (auth.authenticated(req)) return next();
+  if (req.method === 'GET') return res.redirect('/admin/login');
+  res.status(401).send(views.loginPage({ local: isLocal(req), error: 'Your admin session ended. Sign in again before making changes.' }));
+});
 
 // Every admin page carries the sheet sync's state in its header; null when no
 // spreadsheet is configured.
@@ -138,18 +152,22 @@ app.get('/admin', (req, res) => {
 });
 
 // People / roster.
+function usersPage(req, flash, editing, draft = false) {
+  return views.usersPage({
+    users: store.listUsers(), flash, editing, draft,
+    roster: sync ? sync.status().roster : { warnings: [], unlinked: [] },
+    online: sheetReachable(),
+    sync: syncStatus(), local: isLocal(req),
+  });
+}
+
 app.get('/admin/users', (req, res) => {
   const flash = req.query.ok
     ? { type: 'ok', text: req.query.ok }
     : req.query.err ? { type: 'err', text: req.query.err } : null;
   // ?edit=<id> opens that person's details.
   const editing = req.query.edit ? store.getUser(Number(req.query.edit)) : null;
-  res.send(views.usersPage({
-    users: store.listUsers(), flash, editing,
-    roster: sync ? sync.status().roster : { warnings: [], unlinked: [] },
-    online: sheetReachable(),
-    sync: syncStatus(), local: isLocal(req),
-  }));
+  res.send(usersPage(req, flash, editing));
 });
 
 // A change to a person goes to the Staffers tab first, and `apply` saves it
@@ -160,7 +178,12 @@ async function saveStaffer(person, own, apply) {
   if (!sync) return apply();
   return sync.saveStaffer(roster.rowOf(person), own, apply);
 }
-const notSaved = (e) => encodeURIComponent(e.offline ? 'Offline — not saved.' : `Not saved — ${e.message}`);
+const notSaved = (e) => (e.offline ? 'Offline — not saved.' : `Not saved — ${e.message}`);
+// A form that can't be saved is shown again with what was typed still in it —
+// sent straight back rather than redirected, so nobody's details ride in a URL.
+const typed = (body) => Object.fromEntries(
+  ['name', 'student_id', 'section', 'status', 'telegram'].map((key) => [key, String(body[key] || '')])
+);
 // People are changed in the sheet first, so not without it.
 const sheetReachable = () => !sync || sync.status().state !== 'offline';
 
@@ -190,28 +213,28 @@ app.get('/register', (req, res) => {
 app.post('/register', async (req, res) => {
   const rfid = String(req.body.rfid || '').trim();
   const { person, error } = people.readPerson(req.body);
+  const refuse = (text, status = 400) => res.status(status).send(views.registerPage({
+    flash: { type: 'err', text }, unknownScans: scanner.unknownScans,
+    prefill: { ...typed(req.body), rfid }, online: sheetReachable(), draft: true,
+  }));
 
-  if (error) return res.redirect('/register?err=' + encodeURIComponent(error));
-  if (!/^\d{1,64}$/.test(rfid)) {
-    return res.redirect('/register?err=' + encodeURIComponent('Tap their ID, or type its card number — all digits.'));
-  }
+  if (error) return refuse(error);
+  if (!/^\d{1,64}$/.test(rfid)) return refuse('Tap their ID, or type its card number — all digits.');
   const { name } = person;
   const namesake = store.getOtherWithStudentId(person.student_id);
-  if (namesake) {
-    return res.redirect('/register?err=' + encodeURIComponent(`ID number ${person.student_id} already belongs to ${namesake.name}.`));
-  }
+  if (namesake) return refuse(`ID number ${person.student_id} already belongs to ${namesake.name}.`);
   const existing = store.getUserByRfid(rfid);
   if (existing) {
     const hint = existing.active ? '' : ' They are deactivated — ask an admin to reactivate them.';
-    return res.redirect('/register?err=' + encodeURIComponent(`That card number is already registered to ${existing.name}.${hint}`));
+    return refuse(`That card number is already registered to ${existing.name}.${hint}`);
   }
   try {
     await saveStaffer({ ...person, active: 1, rfid }, null, () => store.createUser(person, rfid));
     scanner.forgetUnknown(rfid);
     kickSync(true);
-    res.redirect('/register?ok=' + encodeURIComponent(`${name} registered.`));
+    res.redirect('/register?ok=' + encodeURIComponent(`${name} registered. Registration does not check you in. Return to the tap screen and tap your ID to start your time.`));
   } catch (e) {
-    res.redirect('/register?err=' + notSaved(e));
+    refuse(notSaved(e), 503);
   }
 });
 
@@ -221,18 +244,19 @@ app.post('/admin/users/:id', async (req, res) => {
   const user = store.getUser(id);
   if (!user) return res.redirect('/admin/users?err=' + encodeURIComponent('No such person.'));
   const { person, error } = people.readPerson(req.body);
-  if (error) return res.redirect(`/admin/users?edit=${id}&err=` + encodeURIComponent(error));
+  const refuse = (text, status = 400) => res.status(status).send(
+    usersPage(req, { type: 'err', text }, { ...user, ...typed(req.body) }, true)
+  );
+  if (error) return refuse(error);
   const namesake = store.getOtherWithStudentId(person.student_id, id);
-  if (namesake) {
-    return res.redirect(`/admin/users?edit=${id}&err=` + encodeURIComponent(`ID number ${person.student_id} already belongs to ${namesake.name}.`));
-  }
+  if (namesake) return refuse(`ID number ${person.student_id} already belongs to ${namesake.name}.`);
   try {
     await saveStaffer({ ...person, active: user.active, rfid: user.rfid }, user, () => store.updateUser(id, person));
     showStatus(); // their name may be on the tap screen
     kickSync(true);
     res.redirect('/admin/users?ok=' + encodeURIComponent(`${person.name} saved.`));
   } catch (e) {
-    res.redirect(`/admin/users?edit=${id}&err=` + notSaved(e));
+    refuse(notSaved(e), 503);
   }
 });
 
@@ -247,7 +271,7 @@ async function setActive(req, res, active, done) {
     kickSync(true);
     res.redirect('/admin/users?ok=' + encodeURIComponent(done));
   } catch (e) {
-    res.redirect('/admin/users?err=' + notSaved(e));
+    res.redirect('/admin/users?err=' + encodeURIComponent(notSaved(e)));
   }
 }
 
@@ -302,25 +326,11 @@ app.get('/admin/hours.csv', (req, res) => {
   // A spreadsheet can't show a warning banner, so refuse rather than hand back
   // a file whose date range silently isn't the one that was asked for.
   if (error) return res.status(400).type('text/plain').send(error);
-  const { report } = buildReport(startISO, endISO);
-
-  const escCsv = (v) => {
-    const s = String(v == null ? '' : v);
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  };
-  // "Uncounted sessions" travels with the numbers: a discarded session shows up as a
-  // silent zero otherwise, and this is the file someone signs off residency on.
-  const lines = [['Name', 'Student ID', 'Hours', 'Sessions', 'Still in', 'Uncounted sessions', 'Deactivated'].join(',')];
-  for (const r of report) {
-    lines.push([
-      r.name, r.student_id, r.hours.toFixed(2), r.sessions,
-      r.open ? 'yes' : '', r.uncounted.length || '', r.active ? '' : 'yes',
-    ].map(escCsv).join(','));
-  }
+  const { report: rows } = buildReport(startISO, endISO);
   const label = (start || 'all') + '_to_' + (end || 'now');
   res.set('Content-Type', 'text/csv; charset=utf-8');
   res.set('Content-Disposition', `attachment; filename="hours_${label}.csv"`);
-  res.send(lines.join('\n'));
+  res.send(report.hoursCsv(rows));
 });
 
 // ---- Tap screen ----------------------------------------------------------
@@ -365,13 +375,26 @@ function fromTapScreen(req, res, next) {
 
 // Only on the Pi does the page insist that digits arrive at reader speed — see
 // stationPage. On a Mac with no reader, typing a number is how you test.
-app.get('/station', (req, res) => res.send(views.stationPage({ readerOnly: process.platform === 'linux' })));
+app.get('/station', (req, res) => {
+  auth.logout(req, res);
+  res.set('Cache-Control', 'no-store');
+  res.send(views.stationPage({ readerOnly: process.platform === 'linux' }));
+});
 
 app.post('/station/tap', fromTapScreen, express.json(), (req, res) => {
   const rfid = String((req.body && req.body.rfid) || '').trim();
   if (!/^\d{1,64}$/.test(rfid)) return res.status(400).json({ ok: false, error: 'not a card number' });
-
-  const result = scanner.handle(rfid);
+  const requestId = req.body.requestId;
+  if (typeof requestId !== 'string' || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+    return res.status(400).json({ ok: false, error: 'Missing or invalid tap receipt. Reload the tap screen.' });
+  }
+  let result;
+  try {
+    result = scanner.handle(rfid, requestId);
+  } catch (e) {
+    console.error('Tap failed:', e.message);
+    return res.status(500).json({ ok: false, error: 'Could not confirm this tap. Retry the same tap.' });
+  }
   logScan(result);
   if (result.status === 'ok') { showStatus(); kickSync(); }
   res.json({
@@ -380,6 +403,7 @@ app.post('/station/tap', fromTapScreen, express.json(), (req, res) => {
     direction: result.direction,
     name: result.name,
     stale: result.stale,
+    replayed: result.replayed,
     time: result.time,
     rfid: result.status === 'unknown' ? result.rfid : undefined,
   });

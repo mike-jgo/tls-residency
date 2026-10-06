@@ -57,6 +57,12 @@ if (!db.pragma('table_info(events)').some((c) => c.name === 'boot_id')) {
   db.exec('ALTER TABLE events ADD COLUMN boot_id TEXT');
 }
 
+// A retry after a lost reply must return the original tap, not toggle again.
+if (!db.pragma('table_info(events)').some((c) => c.name === 'request_id')) {
+  db.exec('ALTER TABLE events ADD COLUMN request_id TEXT');
+}
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_events_request ON events(request_id) WHERE request_id IS NOT NULL');
+
 // People are deactivated, never deleted: deleting a person would take their
 // residency history with them. Databases from before that lack the column;
 // everyone in them is active.
@@ -136,8 +142,9 @@ const stmt = {
     'SELECT * FROM events WHERE user_id = ? ORDER BY id DESC LIMIT 1'
   ),
   insertEvent:  db.prepare(
-    'INSERT INTO events (user_id, type, ts, boot_id) VALUES (?, ?, ?, ?)'
+    'INSERT INTO events (user_id, type, ts, boot_id, request_id) VALUES (?, ?, ?, ?, ?)'
   ),
+  eventByRequest: db.prepare('SELECT e.*, u.name, u.rfid FROM events e JOIN users u ON u.id = e.user_id WHERE e.request_id = ?'),
   // Insertion order is the true sequence of taps — see the note above.
   eventsForUser: db.prepare(
     'SELECT * FROM events WHERE user_id = ? ORDER BY id ASC'
@@ -202,7 +209,8 @@ module.exports = {
   setUserActive: (id, active) => stmt.setActive.run(active ? 1 : 0, id),
 
   getLastEvent:   (userId) => stmt.lastEvent.get(userId),
-  insertEvent:    (userId, type, ts, bootId = null) => stmt.insertEvent.run(userId, type, ts, bootId),
+  insertEvent:    (userId, type, ts, bootId = null, requestId = null) => stmt.insertEvent.run(userId, type, ts, bootId, requestId),
+  getEventByRequest: (requestId) => stmt.eventByRequest.get(requestId),
   getEventsForUser: (userId) => stmt.eventsForUser.all(userId),
   getCurrentlyIn: (bootId) => stmt.currentlyIn.all(bootId),
 

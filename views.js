@@ -103,7 +103,7 @@ const IDLE_RETURN_MS = 2 * 60 * 1000;
 function layout(title, body, active, local, sync) {
   const badge = sync ? syncBadge(sync) : null;
   // The register page is not an admin page: it links there, no more.
-  const links = active === '/register'
+  const links = active === '/admin/login' ? [] : active === '/register'
     ? [['/register', 'Register'], ['/admin', 'Admin']]
     : [
       ['/admin', 'Dashboard'],
@@ -143,7 +143,7 @@ function layout(title, body, active, local, sync) {
   h1{font-size:22px;margin:0 0 4px}
   .sub{color:var(--muted);margin:0 0 24px}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
-         padding:20px;margin-bottom:22px}
+         padding:20px;margin-bottom:22px;overflow-x:auto}
   .panel h2{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
             margin:0 0 14px}
   table{width:100%;border-collapse:collapse}
@@ -158,7 +158,7 @@ function layout(title, body, active, local, sync) {
   .empty{color:var(--muted);padding:8px 0}
   form.row{display:flex;flex-wrap:wrap;gap:12px;align-items:end}
   label{display:block;font-size:13px;color:var(--muted);margin-bottom:5px}
-  input[type=text],input[type=date],select{padding:9px 11px;border:1px solid var(--line);
+  input[type=text],input[type=password],input[type=date],select{padding:9px 11px;border:1px solid var(--line);
          border-radius:8px;font:inherit;background:#fff;min-width:160px}
   input:disabled{background:#f5f7fa;color:var(--muted)}
   input:focus,select:focus{outline:2px solid var(--brand);outline-offset:1px;border-color:var(--brand)}
@@ -184,26 +184,111 @@ function layout(title, body, active, local, sync) {
   .facts{display:flex;flex-wrap:wrap;gap:8px 28px;margin:14px 0 0;color:var(--muted)}
   .facts b{color:var(--ink);font-variant-numeric:tabular-nums}
   .why{margin:14px 0 0;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
-  .why.error{color:var(--danger)}${BADGE_CSS}
+  .why.error{color:var(--danger)}
+  .why.offline{margin:0 0 14px;color:var(--out)}${BADGE_CSS}
   .caphint{color:var(--out);font-size:12px;margin:12px 0 0}
+  /* A phone: the header stacks, forms go one box to a line, and a table too
+     wide for its panel scrolls inside it. */
+  @media (max-width:640px){
+    .bar{flex-wrap:wrap;gap:8px 16px;padding:10px 14px}
+    .brand small{display:none}
+    .bar form{margin-left:auto}
+    .bar form+form{margin-left:0}
+    nav{order:3;width:100%;margin-left:0}
+    main{padding:20px 14px 48px}
+    .panel{padding:14px}
+    th,td{padding:8px 10px}
+    form.row>div{flex:1 1 100%}
+    input[type=text],input[type=password],input[type=date],select{width:100%;min-width:0}
+    form.row .btn{flex:1;text-align:center}
+  }
 </style>
 </head>
 <body>
 <header><div class="bar">
   <div class="brand">${LOGO}<small>${SYSTEM}</small></div>
   <nav>${nav}</nav>
+  ${active.startsWith('/admin') && active !== '/admin/login' ? '<form method="post" action="/admin/logout"><button class="btn ghost" type="submit">Sign out</button></form>' : ''}
   ${badge ? `<form method="post" action="/admin/sync">
     <input type="hidden" name="back" value="${active}">
     <button class="sync ${badge.state}" type="submit" title="Sync now">${icon(badge.state)}${esc(badge.label)}</button>
   </form>` : ''}
 </div></header>
 <main>${body}</main>
+<script>
+  // Returning through browser history must recheck the admin session.
+  window.addEventListener('pageshow', function (e) {
+    if (e.persisted && location.pathname.indexOf('/admin') === 0) location.reload();
+  });
+  var draftForm = document.querySelector('form.scanbox');
+  var draftKey = draftForm ? 'residency-draft:' + draftForm.getAttribute('action') : null;
+  var draftDirty = false;
+  function saveDraft() {
+    if (!draftForm || !draftDirty) return true;
+    try {
+      sessionStorage.setItem(draftKey, JSON.stringify(Object.fromEntries(new FormData(draftForm))));
+      return true;
+    } catch (e) { return false; }
+  }
+  try {
+    if (new URLSearchParams(location.search).has('ok')) {
+      var prefix = 'residency-draft:' + location.pathname;
+      Object.keys(sessionStorage).forEach(function (key) {
+        if (key === prefix || key.indexOf(prefix + '/') === 0) sessionStorage.removeItem(key);
+      });
+    }
+    if (draftForm) {
+      var savedDraft = JSON.parse(sessionStorage.getItem(draftKey) || 'null');
+      if (savedDraft) {
+        // A form the server sent back after an error already holds the draft.
+        var restored = false;
+        Object.keys(savedDraft).forEach(function (name) {
+          var field = draftForm.elements.namedItem(name);
+          if (!field || field.disabled || field.value === savedDraft[name]) return;
+          field.value = savedDraft[name];
+          restored = true;
+        });
+        draftDirty = true;
+        if (restored) {
+          var note = document.createElement('p');
+          note.className = 'note'; note.setAttribute('role', 'status');
+          note.textContent = 'Your unsaved details were restored. Review them before saving. ';
+          // On the shared computer they may be the last person's, not yours.
+          var discard = document.createElement('button');
+          discard.type = 'button'; discard.className = 'btn ghost'; discard.textContent = 'Discard them';
+          discard.onclick = function () {
+            sessionStorage.removeItem(draftKey);
+            draftDirty = false;
+            draftForm.reset();
+            note.remove();
+          };
+          note.appendChild(discard);
+          draftForm.before(note);
+        }
+      }
+    }
+  } catch (e) { /* The form remains usable if browser storage is unavailable. */ }
+  if (draftForm) {
+    ['input', 'change', 'submit'].forEach(function (type) {
+      draftForm.addEventListener(type, function () { draftDirty = true; saveDraft(); });
+    });
+    // Cancel means it: the next Edit starts from what is saved, not from this.
+    Array.prototype.forEach.call(draftForm.querySelectorAll('[data-discard-draft]'), function (link) {
+      link.addEventListener('click', function () {
+        draftDirty = false;
+        try { sessionStorage.removeItem(draftKey); } catch (e) { /* nothing was kept */ }
+      });
+    });
+  }
+</script>
 ${local ? `<script>
   (function () {
     var timer;
     function reset() {
       clearTimeout(timer);
-      timer = setTimeout(function () { location.href = '/station'; }, ${IDLE_RETURN_MS});
+      timer = setTimeout(function () {
+        if (saveDraft()) location.href = '/station';
+      }, ${IDLE_RETURN_MS});
     }
     ['mousemove', 'mousedown', 'keydown', 'wheel', 'touchstart'].forEach(function (type) {
       window.addEventListener(type, reset, { passive: true });
@@ -216,6 +301,20 @@ ${local ? `<script>
 }
 
 // ---- Pages ---------------------------------------------------------------
+
+function loginPage({ local, error = '' }) {
+  return layout('Admin sign in', `
+    <h1>Admin sign in</h1>
+    <p class="sub">Manage staffers and review residency hours. Sign out when you are finished.</p>
+    ${error ? `<p class="flash err" role="alert">${esc(error)}</p>` : ''}
+    <div class="panel"><form method="post" action="/admin/login" class="row">
+      <div><label for="username">Username</label><input id="username" name="username" type="text" autocomplete="username" required autofocus></div>
+      <div><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div>
+      <button class="btn" type="submit">Sign in</button>
+    </form></div>
+    <p class="caphint">${local ? 'Returning to the tap screen locks admin access again. ' : ''}Admin sessions expire after 30 minutes without use.</p>`,
+  '/admin/login', local, null);
+}
 
 // The sheet sync, spelled out: the one place that says what is uploaded, what
 // is waiting, and why.
@@ -255,7 +354,7 @@ function dashboardPage({ currentlyIn, sync, local }) {
 
   const body = `
     <h1>Dashboard</h1>
-    <p class="sub">Who's in the office right now.</p>
+    <p class="sub">Office attendance when this page was opened. <a href="/admin">Refresh attendance</a> to see new taps.</p>
     <div class="panel">
       <h2>Currently in (${currentlyIn.length})</h2>
       <table>
@@ -269,8 +368,8 @@ function dashboardPage({ currentlyIn, sync, local }) {
 
 // A dropdown that starts on nothing, so a choice has to be made.
 function choice(name, values, chosen) {
-  return `<select name="${name}" required>
-            <option value=""></option>${values.map((v) => `
+  return `<select name="${name}" id="${name}" required>
+            <option value="">Choose ${esc(name)}</option>${values.map((v) => `
             <option${v === chosen ? ' selected' : ''}>${esc(v)}</option>`).join('')}
           </select>`;
 }
@@ -278,15 +377,15 @@ function choice(name, values, chosen) {
 // The boxes for a person's details, shared by the register page and the edit
 // form on the People page.
 function personFields(p) {
-  return `<div><label>Name</label>
-          <input type="text" name="name" required autocomplete="off" value="${esc(p.name)}"></div>
-        <div><label>ID number</label>
-          <input type="text" name="student_id" required autocomplete="off" value="${esc(p.student_id)}"></div>
-        <div><label>Section</label>
+  return `<div><label for="person-name">Name</label>
+          <input type="text" name="name" id="person-name" required autocomplete="off" value="${esc(p.name)}"></div>
+        <div><label for="student_id">ID number</label>
+          <input type="text" name="student_id" id="student_id" required autocomplete="off" value="${esc(p.student_id)}"></div>
+        <div><label for="section">Section</label>
           ${choice('section', SECTIONS, p.section)}</div>
-        <div><label>Status</label>
+        <div><label for="status">Status</label>
           ${choice('status', STATUSES, p.status)}</div>
-        <div><label>Telegram</label>
+        <div><label for="telegram">Telegram</label>
           <input type="text" name="telegram" id="telegram" required autocomplete="off"
                  placeholder="@handle" value="${esc(p.telegram)}"></div>`;
 }
@@ -303,9 +402,13 @@ const TELEGRAM_JS = `
 // Registering someone: its own page, opened from the tap screen. Only on the
 // office computer, where the reader is — so no admin password, and a tap goes
 // straight into the Card number box.
-function registerPage({ flash, unknownScans = [], prefill = null, online = true }) {
+//
+// `draft`: this is a form that was just refused. It stays on the page with
+// what was typed even when the reason is that the sheet can't be reached —
+// they can press Add person again once it can.
+function registerPage({ flash, unknownScans = [], prefill = null, online = true, draft = false }) {
   const flashHtml = flash
-    ? `<div class="flash ${flash.type}">${esc(flash.text)}</div>` : '';
+    ? `<div class="flash ${flash.type}"${flash.type === 'err' ? ' role="alert"' : ''}>${esc(flash.text)}</div>` : '';
   const p = prefill || {};
 
   // Cards tapped on the tap screen before anyone opened this page — click one
@@ -331,19 +434,22 @@ function registerPage({ flash, unknownScans = [], prefill = null, online = true 
 
   const body = `
     <h1>Register</h1>
-    <p class="sub">Add a staffer and their ID.</p>
+    <p class="sub">Register once, then return to the tap screen to check in. All fields are required.</p>
     ${flashHtml}
-    ${online ? `<div class="panel">
+    ${flash && flash.type === 'ok' ? '<p><a class="btn" href="/station">Back to the tap screen</a></p>' : ''}
+    ${online || draft ? `<div class="panel">
       <h2>Register someone</h2>
+      ${online ? '' : `<p class="why offline">${icon('offline')} Offline — nothing is saved until the internet is back. Then press Add person again.</p>`}
       <form method="post" action="/register" class="row scanbox">
         ${personFields(p)}
-        <div><label>Card number — tap their ID now</label>
+        <div><label for="rfid">Card number — tap their ID now</label>
           <input type="text" name="rfid" id="rfid" required autocomplete="off"
-                 placeholder="tap ID, or type the number"></div>
+                 placeholder="tap ID, or type the number" value="${esc(p.rfid)}"></div>
         <button class="btn" type="submit">Add person</button>
       </form>
       <p class="caphint">
-        Click the Card number box and have them tap their ID — the reader types the number in.
+        The ID number identifies the staffer. The card number comes from the reader: click its box, then tap the card.
+        Unsaved details are kept in this tab if the tap screen resumes after two minutes.
       </p>
     </div>
     ${unknownHtml}` : `<div class="panel">
@@ -370,10 +476,10 @@ ${TELEGRAM_JS}
 
 function usersPage({
   users, flash, editing = null,
-  roster = { warnings: [], unlinked: [] }, online = true, sync, local,
+  roster = { warnings: [], unlinked: [] }, online = true, draft = false, sync, local,
 }) {
   const flashHtml = flash
-    ? `<div class="flash ${flash.type}">${esc(flash.text)}</div>` : '';
+    ? `<div class="flash ${flash.type}"${flash.type === 'err' ? ' role="alert"' : ''}>${esc(flash.text)}</div>` : '';
 
   // Deactivated people keep their history and their card number; they are
   // listed apart so the roster is the people whose cards currently work.
@@ -449,14 +555,15 @@ function usersPage({
       <span class="sync offline">${icon('offline')}Offline</span>
       <p class="why">People are changed in the Google Sheet, so that waits for the internet. Taps still work.</p>
     </div>`}
-    ${editing && online ? `<div class="panel">
+    ${editing && (online || draft) ? `<div class="panel">
       <h2>Edit ${esc(editing.name)}</h2>
+      ${online ? '' : '<p class="why offline">Nothing is saved until the internet is back. Then press Save again.</p>'}
       <form method="post" action="/admin/users/${editing.id}" class="row scanbox">
         ${personFields(editing)}
-        <div><label>Card number</label>
-          <input type="text" class="mono" value="${esc(editing.rfid)}" disabled></div>
+        <div><label for="card">Card number</label>
+          <input type="text" class="mono" id="card" value="${esc(editing.rfid)}" disabled></div>
         <button class="btn" type="submit">Save</button>
-        <a class="btn ghost" href="/admin/users">Cancel</a>
+        <a class="btn ghost" href="/admin/users" data-discard-draft>Cancel</a>
       </form>
     </div>` : ''}
     ${canRegister ? '<p><a class="btn" href="/register">Register someone</a></p>' : ''}
@@ -507,7 +614,7 @@ function hoursPage({ report, tabs = [], start, end, error, sync, local }) {
   // A bad date range is the admin's typo, not a fact about residency — say so
   // above the table, and be explicit that the numbers below ignore it.
   const errorHtml = error
-    ? `<div class="flash err">${esc(error)} Showing every date instead.</div>` : '';
+    ? `<div class="flash err" role="alert">${esc(error)} Showing every date instead.</div>` : '';
 
   const q = `start=${encodeURIComponent(start || '')}&end=${encodeURIComponent(end || '')}`;
   const body = `
@@ -518,8 +625,8 @@ function hoursPage({ report, tabs = [], start, end, error, sync, local }) {
     ${errorHtml}
     <div class="panel">
       <form method="get" action="/admin/hours" class="row">
-        <div><label>From</label><input type="date" name="start" value="${esc(start || '')}"></div>
-        <div><label>To</label><input type="date" name="end" value="${esc(end || '')}"></div>
+        <div><label for="start">From</label><input type="date" name="start" id="start" value="${esc(start || '')}"></div>
+        <div><label for="end">To</label><input type="date" name="end" id="end" value="${esc(end || '')}"></div>
         <button class="btn" type="submit">Apply</button>
         <a class="btn ghost" href="/admin/hours.csv?${q}">Download CSV</a>
       </form>
@@ -578,10 +685,10 @@ function stationPage({ readerOnly = true } = {}) {
          border-bottom:1px solid var(--line)}
   .brand{font-weight:700;font-size:20px}
   .brand small{color:var(--muted);font-weight:500}
-  #now{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--muted);font-size:20px}
+  #now{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--muted);font-size:20px;white-space:nowrap}
   header a,header button{font:inherit;font-size:16px;font-weight:600;border-radius:9px;
          padding:9px 16px;border:1px solid var(--line);background:#fff;color:var(--ink);
-         text-decoration:none;cursor:pointer}
+         text-decoration:none;cursor:pointer;white-space:nowrap}
   header button{color:var(--danger);border-color:#f0c4bf}
   .wrap{flex:1;display:grid;grid-template-columns:1fr 340px;gap:24px;padding:24px 28px;min-height:0}
   .main{display:flex;align-items:center;justify-content:center;border-radius:var(--radius);
@@ -629,12 +736,18 @@ function stationPage({ readerOnly = true } = {}) {
   .cancel{background:#eef2f7;color:var(--ink)}
   .confirm{background:var(--danger);color:#fff}
   .warn{color:var(--danger)!important;font-weight:600}
+  @media (max-width:1100px){ .brand small{display:none} }
   @media (max-width:900px){
     .wrap{grid-template-columns:1fr;padding:16px}
     header{flex-wrap:wrap;padding:12px 16px;gap:12px}
     #now{order:3;width:100%;margin-left:0;font-size:16px}
     header a{margin-left:auto}
     .big{font-size:56px} .name{font-size:32px} .main.bad .big{font-size:44px}
+  }
+  @media (max-width:560px){
+    .brand{width:100%}
+    header a{margin-left:0}
+    .main{padding:28px 16px}
   }
 </style>
 </head>
@@ -650,7 +763,7 @@ function stationPage({ readerOnly = true } = {}) {
   <button type="button" id="shut-open">Shut down</button>
 </header>
 <div class="wrap">
-  <div class="main idle" id="main"></div>
+  <div class="main idle" id="main" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="side">
     <h2 id="in-title">In the office</h2>
     <ul class="people" id="in-list"></ul>
@@ -669,8 +782,14 @@ function stationPage({ readerOnly = true } = {}) {
   var MAX_KEY_GAP_MS = 100;
   var SHOW_MS = 6000; // longer than the repeat-tap window, so a nervous second tap
                       // (which the server ignores) still sees its answer on screen
-  var status = { clockReady: true, currentlyIn: [] };
+  var status = { clockReady: false, currentlyIn: [] };
+  var connected = false;
   var shown = null, hideTimer = null, shuttingDown = false;
+  var pending = {}, sending = {};
+  try { pending = JSON.parse(sessionStorage.getItem('residency-pending-taps') || '{}'); } catch (e) {}
+  function savePending() {
+    try { sessionStorage.setItem('residency-pending-taps', JSON.stringify(pending)); } catch (e) {}
+  }
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -694,7 +813,14 @@ function stationPage({ readerOnly = true } = {}) {
     var box = el('div');
     if (shown) {
       var t = shown;
-      if (t.status === 'ok' && t.direction === 'in') {
+      if (t.replayed) {
+        main.className = 'main ' + t.direction;
+        box.appendChild(el('div', 'big', 'Tap confirmed'));
+        box.appendChild(el('div', 'name', t.name));
+        box.appendChild(el('div', 'detail', 'Your earlier ' + t.direction.toUpperCase() + ' was recorded at ' +
+          new Date(t.time).toLocaleString('en-PH', { timeZone: TZ }) + '. No second tap was recorded.'));
+        box.appendChild(el('div', 'extra', 'Tap again only for a new arrival or departure.'));
+      } else if (t.status === 'ok' && t.direction === 'in') {
         main.className = 'main in';
         box.appendChild(el('div', 'big', 'IN'));
         box.appendChild(el('div', 'name', t.name));
@@ -718,11 +844,19 @@ function stationPage({ readerOnly = true } = {}) {
         main.className = 'main bad';
         box.appendChild(el('div', 'big', 'Not recorded'));
         box.appendChild(el('div', 'detail', 'The clock isn’t set yet. Wait a moment, then tap again.'));
+      } else if (t.status === 'ignored') {
+        main.className = 'main idle';
+        box.appendChild(el('div', 'big', 'Repeat ignored'));
+        box.appendChild(el('div', 'detail', 'This ID was just read. No new tap was recorded. Wait five seconds if you need to tap again.'));
       } else {
         main.className = 'main bad';
-        box.appendChild(el('div', 'big', 'Not recorded'));
-        box.appendChild(el('div', 'detail', 'Couldn’t reach the server. Tap again in a moment.'));
+        box.appendChild(el('div', 'big', 'Not confirmed yet'));
+        box.appendChild(el('div', 'detail', 'Your tap may already be saved. Tap the same ID again to safely confirm it.'));
       }
+    } else if (!connected) {
+      main.className = 'main idle';
+      box.appendChild(el('div', 'big', 'Connecting…'));
+      box.appendChild(el('div', 'detail', 'Wait for “Tap your ID” before tapping.'));
     } else if (!status.clockReady) {
       main.className = 'main idle';
       var glyph = el('div', 'glyph');
@@ -734,6 +868,7 @@ function stationPage({ readerOnly = true } = {}) {
       main.className = 'main idle';
       box.appendChild(el('div', 'big', 'Tap your ID'));
       box.appendChild(el('div', 'detail', 'Once when you arrive, once when you leave.'));
+      if (Object.keys(pending).length) box.appendChild(el('div', 'extra', 'An earlier tap still needs confirmation. Tap that same ID again.'));
     }
     main.appendChild(box);
   }
@@ -752,9 +887,10 @@ function stationPage({ readerOnly = true } = {}) {
 
   function renderSide() {
     var n = status.currentlyIn.length;
-    document.getElementById('in-title').textContent = 'In the office (' + n + ')';
+    document.getElementById('in-title').textContent = connected ? 'In the office (' + n + ')' : 'Attendance unavailable';
     var list = peopleList(document.getElementById('in-list'));
-    if (!n) list.appendChild(el('li', 'empty', 'Nobody is checked in.'));
+    if (!connected) { list.textContent = ''; list.appendChild(el('li', 'empty', 'Waiting for the office computer.')); }
+    else if (!n) list.appendChild(el('li', 'empty', 'Nobody is checked in.'));
   }
 
   function svg(name) {
@@ -797,6 +933,16 @@ function stationPage({ readerOnly = true } = {}) {
         'Wait until the screen goes blank and the green light on the Pi stops flashing, then unplug it.'));
       return;
     }
+    if (!connected) {
+      var waiting = el('h2', null, 'Checking attendance…');
+      waiting.id = 'shut-title';
+      shutBody.appendChild(waiting);
+      shutBody.appendChild(el('p', null, 'Wait for the connection before shutting down. Attendance may have changed.'));
+      var back = el('button', 'cancel', 'Cancel');
+      back.type = 'button'; back.onclick = closeShut;
+      shutBody.appendChild(back); back.focus();
+      return;
+    }
     var n = status.currentlyIn.length;
     var title = el('h2', null, n ? n + (n === 1 ? ' person is' : ' people are') +
       ' still checked in' : 'Everyone has tapped out');
@@ -824,7 +970,9 @@ function stationPage({ readerOnly = true } = {}) {
   }
 
   function openShut() { shut.classList.add('open'); renderShut(); }
-  function closeShut() { if (!shuttingDown) shut.classList.remove('open'); }
+  function closeShut() {
+    if (!shuttingDown) { shut.classList.remove('open'); document.getElementById('shut-open').focus(); }
+  }
 
   function doShutdown() {
     shuttingDown = true;
@@ -846,25 +994,33 @@ function stationPage({ readerOnly = true } = {}) {
   function show(tap) {
     // An ignored repeat changes nothing, and the screen is still showing the
     // answer to the tap it repeats.
-    if (tap.status === 'ignored') return;
+    if (tap.status === 'ignored' && shown) return;
     shown = tap;
     clearTimeout(hideTimer);
-    hideTimer = setTimeout(function () { shown = null; renderMain(); }, SHOW_MS);
+    if (tap.status !== 'error') hideTimer = setTimeout(function () { shown = null; renderMain(); }, SHOW_MS);
     renderMain();
   }
 
   function sendTap(rfid) {
+    if (shuttingDown || sending[rfid]) return;
+    if (!pending[rfid]) pending[rfid] = crypto.randomUUID();
+    savePending();
+    sending[rfid] = true;
+    var controller = new AbortController();
+    var timeout = setTimeout(function () { controller.abort(); }, 10000);
     fetch('/station/tap', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Station': '1' },
-      body: JSON.stringify({ rfid: rfid }),
+      body: JSON.stringify({ rfid: rfid, requestId: pending[rfid] }),
+      signal: controller.signal,
     })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(show)
-      .catch(function () { show({ status: 'error' }); });
+      .then(function (tap) { delete pending[rfid]; savePending(); show(tap); })
+      .catch(function () { show({ status: 'error' }); })
+      .finally(function () { clearTimeout(timeout); delete sending[rfid]; });
   }
 
-  var digits = '', lastKey = 0;
+  var digits = '', lastKey = 0, scanStarted = false, overflow = false;
   window.addEventListener('keydown', function (e) {
     if (e.ctrlKey || e.altKey || e.metaKey) return;
     var now = performance.now();
@@ -873,21 +1029,32 @@ function stationPage({ readerOnly = true } = {}) {
 
     if (/^[0-9]$/.test(e.key)) {
       e.preventDefault(); e.stopPropagation();
-      if (READER_ONLY && gap > MAX_KEY_GAP_MS) digits = ''; // a new burst starts here
+      if (READER_ONLY && gap > MAX_KEY_GAP_MS) { digits = ''; overflow = false; }
+      scanStarted = true;
+      if (overflow) return;
       digits += e.key;
-      if (digits.length > 64) digits = '';
+      if (digits.length > 64) { digits = ''; overflow = true; }
     } else if (e.key === 'Enter') {
+      // With no digits before it this is not the reader: it is somebody
+      // pressing Enter on a link or button, and theirs to press.
+      if (!scanStarted) return;
       e.preventDefault(); e.stopPropagation();
       var card = digits;
-      digits = '';
+      digits = ''; scanStarted = false; overflow = false;
       if (card && (!READER_ONLY || gap <= MAX_KEY_GAP_MS)) sendTap(card);
     } else if (e.key === 'Escape') {
-      digits = '';
+      digits = ''; scanStarted = false; overflow = false;
       closeShut();
     } else {
-      digits = '';
+      digits = ''; scanStarted = false; overflow = false;
+      if (e.key === 'Tab' && shut.classList.contains('open')) {
+        var buttons = shut.querySelectorAll('button');
+        if (!buttons.length) { e.preventDefault(); return; }
+        if (e.shiftKey && document.activeElement === buttons[0]) { e.preventDefault(); buttons[buttons.length - 1].focus(); }
+        else if (!e.shiftKey && document.activeElement === buttons[buttons.length - 1]) { e.preventDefault(); buttons[0].focus(); }
+      }
     }
-  }, true); // capture: before any focused button or link can act on Enter
+  }, true); // capture: before any focused button or link can act on a tap's Enter
 
   // Keystrokes only reach this page while it has focus. If something takes
   // it — a stray click outside the browser, a system dialog — say so loudly.
@@ -899,10 +1066,15 @@ function stationPage({ readerOnly = true } = {}) {
 
   // ---- Live updates from the server ----
   var es = new EventSource('/station/events');
-  es.onopen = function () { document.getElementById('offline').style.display = 'none'; };
-  es.onerror = function () { if (!shuttingDown) document.getElementById('offline').style.display = 'flex'; };
+  es.onerror = function () {
+    connected = false;
+    if (!shuttingDown) document.getElementById('offline').style.display = 'flex';
+    renderMain(); renderSide(); renderShut();
+  };
   es.addEventListener('status', function (e) {
     status = JSON.parse(e.data);
+    connected = true;
+    document.getElementById('offline').style.display = 'none';
     renderMain(); renderSide(); renderShut(); renderSync();
   });
 
@@ -914,4 +1086,4 @@ function stationPage({ readerOnly = true } = {}) {
 </html>`;
 }
 
-module.exports = { dashboardPage, registerPage, usersPage, hoursPage, stationPage, syncBadge };
+module.exports = { loginPage, dashboardPage, registerPage, usersPage, hoursPage, stationPage, syncBadge };

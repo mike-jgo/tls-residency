@@ -98,6 +98,42 @@ test('the toggle follows the database, so a restart cannot desync it', () => {
   assert.strictEqual(restarted.handle(card).direction, 'out');
 });
 
+test('a lost reply can be retried beyond the repeat window and across a restart without toggling', () => {
+  const card = register('Receipt test');
+  advance(REPEAT_IGNORE_MS);
+  const first = scanner.handle(card, 'receipt-test-one');
+  advance(2 * REPEAT_IGNORE_MS);
+  const restarted = createScanner({ store, now, mono, bootId: BOOT });
+  const retried = restarted.handle(card, 'receipt-test-one');
+  assert.strictEqual(retried.direction, 'in');
+  assert.strictEqual(retried.time, first.time);
+  assert.strictEqual(retried.replayed, true);
+  assert.strictEqual(store.getEventsForUser(store.getUserByRfid(card).id).length, 1);
+  assert.strictEqual(restarted.handle(card, 'receipt-test-two').direction, 'out');
+});
+
+test('a tap receipt cannot be reused for another card', () => {
+  const card = register('Receipt owner');
+  const other = register('Other receipt owner');
+  scanner.handle(card, 'receipt-owner');
+  assert.throws(() => scanner.handle(other, 'receipt-owner'), /different card/);
+  assert.strictEqual(store.getEventsForUser(store.getUserByRfid(other).id).length, 0);
+});
+
+test('a failed database write does not swallow an immediate retry', () => {
+  const card = register('Disk retry');
+  let fail = true;
+  const failingStore = { ...store, insertEvent(...args) {
+    if (fail) { fail = false; throw new Error('disk error'); }
+    return store.insertEvent(...args);
+  } };
+  const tested = createScanner({ store: failingStore, now, mono, bootId: BOOT });
+  assert.throws(() => tested.handle(card, 'disk-retry'), /disk error/);
+  advance(SECOND);
+  assert.strictEqual(tested.handle(card, 'disk-retry').direction, 'in');
+  assert.strictEqual(store.getEventsForUser(store.getUserByRfid(card).id).length, 1);
+});
+
 test('each person toggles independently', () => {
   const one = register('Eli');
   const two = register('Fay');
