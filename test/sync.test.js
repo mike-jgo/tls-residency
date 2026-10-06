@@ -41,14 +41,65 @@ function fakeSheet() {
     async clearRanges(ranges) {
       for (const range of ranges) {
         sheet.clears.push(range);
-        const [, title] = /^'(.+)'!A2:G$/.exec(range);
+        const [, title] = /^'(.+)'!A2:H$/.exec(range);
         const cells = tabs.get(title);
         for (const k of [...cells.keys()]) if (Number(k.slice(1)) >= 2) cells.delete(k);
       }
     },
     tabs,
+    shaped: [],
+    async shapeTab(title, shape) { sheet.shaped.push({ title, ...shape }); },
+    // Like Google: no empty rows at the bottom, no empty cells at the end of a row.
+    async readRange(range) {
+      const [, title, c1, r1, c2, r2] = /^'(.+)'!([A-Z])(\d+):([A-Z])(\d*)$/.exec(range);
+      const cells = tabs.get(title);
+      const last = Number(r2) || Math.max(0, ...[...cells.keys()].map((k) => Number(k.slice(1))));
+      const rows = [];
+      for (let r = Number(r1); r <= last; r++) {
+        const row = [];
+        for (let c = c1.charCodeAt(0); c <= c2.charCodeAt(0); c++) row.push(cells.get(String.fromCharCode(c) + r) ?? '');
+        while (row.length && row[row.length - 1] === '') row.pop();
+        rows.push(row);
+      }
+      while (rows.length && !rows[rows.length - 1].length) rows.pop();
+      return rows;
+    },
+    deleted: [], // every deleteColumns call
+    async deleteColumns(title, [first, past]) {
+      sheet.deleted.push([title, first, past]);
+      const moved = new Map();
+      for (const [k, v] of tabs.get(title)) {
+        const c = k.charCodeAt(0) - 65;
+        if (c < first) moved.set(k, v);
+        else if (c >= past) moved.set(String.fromCharCode(65 + c - (past - first)) + k.slice(1), v);
+      }
+      tabs.set(title, moved);
+    },
     async listTabs() { return [...tabs.keys()]; },
     async addTabs(titles) { for (const t of titles) tabs.set(t, new Map()); },
+    views: new Map(), // title -> the filter views it has, by title
+    frozen: new Map(),
+    async describeTabs() {
+      return [...tabs.keys()].map((title) => ({ title, sheetId: title, views: (sheet.views.get(title) || []).map((v) => v.title) }));
+    },
+    async dressTabs(list) {
+      for (const { sheetId, frozen, views } of list) {
+        sheet.frozen.set(sheetId, frozen);
+        sheet.views.set(sheetId, [...(sheet.views.get(sheetId) || []), ...views]);
+      }
+    },
+    styled: [], // every tab formatTabs was given, by title
+    async formatTabs(list) { for (const t of list) sheet.styled.push(t.title); },
+    fitted: [], // every fitColumns call
+    async fitColumns(sheetIds) { sheet.fitted.push(sheetIds); },
+    formulas: [], // every writeFormulas call
+    async writeFormulas(data) {
+      sheet.formulas.push(data);
+      for (const { range, values } of data) {
+        const [, title, cell] = /^'(.+)'!([A-Z]\d+):/.exec(range);
+        values[0].forEach((v, j) => tabs.get(title).set(String.fromCharCode(cell.charCodeAt(0) + j) + cell.slice(1), v));
+      }
+    },
     async writeRanges(data) {
       const mode = sheet.fail;
       sheet.fail = null;
@@ -93,7 +144,7 @@ function fakeSheet() {
 let cards = 0;
 function person(name) {
   const rfid = String(5000 + ++cards);
-  store.createUser(name, 'S' + cards, 'staffer', rfid);
+  store.createUser({ name, student_id: 'S' + cards }, rfid);
   return store.getUserByRfid(rfid);
 }
 // Manila is UTC+8: 09:00 there is 01:00Z.
@@ -374,7 +425,7 @@ test('last month\'s open check-in stops showing as still in after the next boot'
   // Next morning is a new month and a new boot. Nobody has tapped yet.
   await syncer(sheet, at(2027, 7, 1, 8), { bootId: 'boot-july' }).syncOnce();
   assert.strictEqual(sheet.cell('June 2027', 'E' + row()), undefined, 'no longer still in');
-  assert.strictEqual(sheet.cell('June 2027', 'F' + row()), 'yes', 'not counted');
+  assert.strictEqual(sheet.cell('June 2027', 'F' + row()), 1, 'one session not counted');
 });
 
 test('a roster change reaches earlier months too', async () => {
@@ -411,4 +462,288 @@ test('starting from the top removes people the database no longer has from Total
   assert.strictEqual(sheet.cell('Totals', 'A1'), 'Last synced');
   assert.strictEqual(sheet.cell('Totals', 'A3'), 'Name');
   assert.strictEqual(sheet.column('Totals', 'A').length, 2 + store.listUsers().length, 'the table is whole again');
+});
+
+// ---- The Staffers tab: the record of who the staffers are (lib/roster.js) --
+
+const details = (name, id, changes = {}) => ({
+  name, student_id: id, section: 'A&G', status: 'Probie', telegram: '@' + id.replace('-', '_'), ...changes,
+});
+const { rowOf } = require('../lib/roster');
+const staffRow = (sheet, id) => sheet.column('Staffers', 'B').indexOf(id) + 2;
+const staffCells = (sheet, id) => 'ABCDEFG'.split('').map((c) => sheet.cell('Staffers', c + staffRow(sheet, id)));
+const setCells = (sheet, row, cells) => cells.forEach((v, i) => {
+  if (v === '') sheet.tabs.get('Staffers').delete('ABCDEFG'[i] + row); else sheet.tabs.get('Staffers').set('ABCDEFG'[i] + row, v);
+});
+
+test('people already on this device are put in a new Staffers tab, once', async () => {
+  const uma = person('Uma Dir');
+  store.updateUser(uma.id, details('Uma Dir', 'D-uma'));
+  const sheet = fakeSheet();
+  const sync = syncer(sheet, at(2028, 1, 3, 9));
+  await sync.syncOnce();
+
+  assert.strictEqual(sheet.cell('Staffers', 'G1'), 'Card number');
+  assert.deepStrictEqual(staffCells(sheet, 'D-uma'), ['Uma Dir', 'D-uma', 'A&G', 'Probie', '@D_uma', undefined, uma.rfid]);
+  assert.deepStrictEqual(sheet.shaped.map((t) => [t.title, t.columns, Object.keys(t.dropdowns)]), [['Staffers', 7, ['C', 'D']]]);
+
+  await sync.syncOnce();
+  assert.strictEqual(sheet.column('Staffers', 'B').filter((id) => id === 'D-uma').length, 1);
+  assert.strictEqual(sheet.shaped.length, 1);
+});
+
+test('an edit made in the sheet is taken up here, and reaches the hours tables', async () => {
+  const vic = person('Vic Dir');
+  store.updateUser(vic.id, details('Vic Dir', 'D-vic'));
+  tapAt(vic, 'in', at(2028, 2, 1, 9));
+  tapAt(vic, 'out', at(2028, 2, 1, 11));
+  const sheet = fakeSheet();
+  const sync = syncer(sheet, at(2028, 2, 1, 12));
+  await sync.syncOnce();
+
+  const staffers = sheet.tabs.get('Staffers');
+  const row = staffRow(sheet, 'D-vic');
+  staffers.set('A' + row, 'Victor Dir').set('D' + row, 'Regular').set('E' + row, 'victor').set('F' + row, 'Yes');
+  await sync.syncOnce();
+
+  const now = store.getUser(vic.id);
+  assert.strictEqual(now.name, 'Victor Dir');
+  assert.strictEqual(now.status, 'Regular');
+  assert.strictEqual(now.telegram, '@victor', 'the @ is added to what was typed in the sheet');
+  assert.strictEqual(now.active, 0, 'deactivated from the sheet');
+  assert.strictEqual(now.rfid, vic.rfid);
+  assert.strictEqual(sheet.hours('February 2028')['Victor Dir'], 2);
+  assert.strictEqual(sheet.hours('February 2028')['Vic Dir'], undefined);
+});
+
+test('a row deleted from the sheet deactivates the person and keeps their taps', async () => {
+  const wes = person('Wes Dir');
+  store.updateUser(wes.id, details('Wes Dir', 'D-wes'));
+  tapAt(wes, 'in', at(2028, 3, 1, 9));
+  tapAt(wes, 'out', at(2028, 3, 1, 10));
+  const sheet = fakeSheet();
+  const sync = syncer(sheet, at(2028, 3, 1, 12));
+  await sync.syncOnce();
+
+  setCells(sheet, staffRow(sheet, 'D-wes'), ['', '', '', '', '', '', '']);
+  await sync.syncOnce();
+  assert.strictEqual(store.getUser(wes.id).active, 0);
+  assert.strictEqual(store.getEventsForUser(wes.id).length, 2);
+  assert.ok(!sheet.column('Staffers', 'B').includes('D-wes'), 'the row is not put back');
+  assert.strictEqual(sheet.hours('Totals')['Wes Dir'], 1);
+});
+
+test('a bad row in the sheet is skipped with a warning and changes nothing here', async () => {
+  const xia = person('Xia Dir');
+  store.updateUser(xia.id, details('Xia Dir', 'D-xia'));
+  const sheet = fakeSheet();
+  const sync = syncer(sheet, at(2028, 4, 1, 9));
+  await sync.run();
+  assert.ok(!sync.status().roster.warnings.some((w) => w.includes('Xia Dir')));
+
+  sheet.tabs.get('Staffers').set('C' + staffRow(sheet, 'D-xia'), 'Gossip');
+  await sync.run();
+  sync.stop();
+  assert.strictEqual(store.getUser(xia.id).section, 'A&G');
+  assert.strictEqual(store.getUser(xia.id).active, 1);
+  assert.ok(sync.status().roster.warnings.some((w) => /Xia Dir.*section/.test(w)));
+});
+
+test('a row with a card for someone not here creates them, card and all', async () => {
+  const sheet = fakeSheet();
+  const sync = syncer(sheet, at(2028, 5, 1, 9));
+  await sync.syncOnce();
+  setCells(sheet, sheet.column('Staffers', 'B').length + 2, ['Yan Dir', 'D-yan', 'Web', 'Newbie', 'yan_d', '', '880001']);
+  await sync.syncOnce();
+
+  const yan = store.getUserByRfid('880001');
+  assert.deepStrictEqual(
+    [yan.name, yan.student_id, yan.section, yan.status, yan.telegram, yan.active],
+    ['Yan Dir', 'D-yan', 'Web', 'Newbie', '@yan_d', 1],
+  );
+});
+
+// ---- Saving from the People page: the sheet first, then here ------------
+
+test('a save reaches the sheet before it is kept here', async () => {
+  const sheet = fakeSheet();
+  const sync = syncer(sheet, at(2028, 6, 1, 9));
+  await sync.syncOnce();
+  const zoe = { ...details('Zoe Dir', 'D-zoe'), active: 1, rfid: '880002' };
+
+  let applied = 0;
+  await sync.saveStaffer(rowOf(zoe), null, () => { applied++; store.createUser(details('Zoe Dir', 'D-zoe'), '880002'); });
+  assert.strictEqual(applied, 1);
+  assert.strictEqual(staffCells(sheet, 'D-zoe')[6], '880002');
+
+  // An edit, then a deactivation, land on the same row.
+  const saved = store.getUserByRfid('880002');
+  const edited = { ...zoe, status: 'Regular', active: 0 };
+  await sync.saveStaffer(rowOf(edited), saved, () => {});
+  assert.deepStrictEqual(staffCells(sheet, 'D-zoe').slice(3, 7), ['Regular', '@D_zoe', 'yes', '880002']);
+  assert.strictEqual(sheet.column('Staffers', 'B').filter((id) => id === 'D-zoe').length, 1);
+});
+
+test('with no internet a save changes nothing, here or in the sheet', async () => {
+  const sheet = fakeSheet();
+  const sync = syncer(sheet, at(2028, 7, 1, 9));
+  await sync.syncOnce();
+  const before = sheet.column('Staffers', 'B').length;
+
+  sheet.fail = 'before';
+  let applied = 0;
+  await assert.rejects(
+    sync.saveStaffer(rowOf({ ...details('Abe Dir', 'D-abe'), active: 1, rfid: '880003' }), null, () => { applied++; }),
+    (e) => e.offline === true,
+  );
+  assert.strictEqual(applied, 0);
+  assert.strictEqual(sheet.column('Staffers', 'B').length, before);
+});
+
+test('a save whose reply was lost is picked up from the sheet by the next sync', async () => {
+  const sheet = fakeSheet();
+  const sync = syncer(sheet, at(2028, 8, 1, 9));
+  await sync.syncOnce();
+
+  sheet.fail = 'after';
+  await assert.rejects(sync.saveStaffer(rowOf({ ...details('Bea Dir', 'D-bea'), active: 1, rfid: '880004' }), null, () => {}));
+  assert.strictEqual(store.getUserByRfid('880004'), undefined);
+  await sync.syncOnce();
+  assert.strictEqual(store.getUserByRfid('880004').name, 'Bea Dir');
+  assert.strictEqual(sheet.column('Staffers', 'B').filter((id) => id === 'D-bea').length, 1);
+});
+
+test('a save is refused when the sheet already has that ID number or card', async () => {
+  const cal = person('Cal Dir');
+  store.updateUser(cal.id, details('Cal Dir', 'D-cal'));
+  const sheet = fakeSheet();
+  const sync = syncer(sheet, at(2028, 9, 1, 9));
+  await sync.syncOnce();
+
+  const twin = { ...details('Twin Dir', 'D-cal'), active: 1, rfid: '880005' };
+  await assert.rejects(sync.saveStaffer(rowOf(twin), null, () => assert.fail('saved')), /D-cal already belongs to Cal Dir/);
+  const thief = { ...details('Thief Dir', 'D-thief'), active: 1, rfid: cal.rfid };
+  await assert.rejects(sync.saveStaffer(rowOf(thief), null, () => assert.fail('saved')), /card number already belongs to Cal Dir/);
+});
+
+test('a different spreadsheet is given everyone here, and its Staffers tab is never emptied', async () => {
+  const dee = person('Dee Dir');
+  store.updateUser(dee.id, details('Dee Dir', 'D-dee'));
+  const one = fakeSheet();
+  await syncer(one, at(2028, 10, 2, 9)).syncOnce();
+  const two = fakeSheet();
+  await syncer(two, at(2028, 10, 2, 10)).syncOnce();
+  assert.strictEqual(staffCells(two, 'D-dee')[0], 'Dee Dir');
+  assert.strictEqual(store.getUser(dee.id).active, 1);
+
+  // Back on the first, which was edited meanwhile: its word is taken.
+  one.tabs.get('Staffers').set('D' + staffRow(one, 'D-dee'), 'Regular');
+  await syncer(one, at(2028, 10, 2, 11)).syncOnce();
+  assert.ok(![...one.clears, ...two.clears].some((range) => range.includes('Staffers')));
+  assert.strictEqual(store.getUser(dee.id).status, 'Regular');
+});
+
+test('a sheet that still has Year and Course columns loses them, and nobody with them', async () => {
+  const fox = person('Fox Dir');
+  store.updateUser(fox.id, details('Fox Dir', 'D-fox'));
+  const sheet = fakeSheet();
+  await sheet.addTabs(['Staffers', 'Search']);
+  const put = (title, at, cells) => cells.forEach((v, i) => {
+    if (v !== '') sheet.tabs.get(title).set(String.fromCharCode(at.charCodeAt(0) + i) + at.slice(1), v);
+  });
+  put('Staffers', 'A1', ['Name', 'ID number', 'Section', 'Status', 'Telegram', 'Year', 'Course', 'Deactivated', 'Card number']);
+  put('Staffers', 'A2', ['Fox Dir', 'D-fox', 'A&G', 'Regular', '@D_fox', '2', 'AB CAM', '', fox.rfid]);
+  put('Search', 'N4', ['Telegram', 'Year', 'Course', 'Deactivated']);
+  const sync = syncer(sheet, at(2029, 8, 1, 9));
+  await sync.syncOnce();
+
+  assert.deepStrictEqual(sheet.deleted, [['Staffers', 5, 7], ['Search', 14, 16]]);
+  assert.deepStrictEqual(staffCells(sheet, 'D-fox'), ['Fox Dir', 'D-fox', 'A&G', 'Regular', '@D_fox', undefined, fox.rfid]);
+  assert.strictEqual(sheet.cell('Staffers', 'G1'), 'Card number');
+  const now = store.getUser(fox.id);
+  assert.deepStrictEqual([now.status, now.active, now.rfid], ['Regular', 1, fox.rfid]);
+
+  await sync.syncOnce();
+  assert.strictEqual(sheet.deleted.length, 2, 'once');
+});
+
+// ---- Finding things in the sheet ----------------------------------------
+
+test('hours and log tabs get their filter views once, and the views move no cells', async () => {
+  const eve = person('Eve Find');
+  tapAt(eve, 'in', at(2029, 1, 8, 9));
+  tapAt(eve, 'out', at(2029, 1, 8, 12));
+  const sheet = fakeSheet();
+  const sync = syncer(sheet, at(2029, 1, 8, 13));
+  await sync.syncOnce();
+
+  const titles = (tab) => sheet.views.get(tab).map((v) => v.title);
+  assert.deepStrictEqual(titles('January 2029'), ['Search', 'Most hours', 'Least hours']);
+  assert.deepStrictEqual(titles('January 2029 Logs'), ['Search', 'Newest first']);
+  assert.deepStrictEqual(titles('Totals'), ['Search', 'Most hours', 'Least hours']);
+  assert.ok(!sheet.views.has('Staffers') && !sheet.views.has('Search'));
+
+  const most = sheet.views.get('Totals').find((v) => v.title === 'Most hours');
+  assert.deepStrictEqual([most.headerRow, most.columns, most.sort], [2, 7, [2, 'DESCENDING']], 'Totals\' table starts on row 3');
+  assert.strictEqual(sheet.frozen.get('Totals'), 3);
+  assert.strictEqual(sheet.frozen.get('January 2029'), 1);
+
+  await sync.syncOnce();
+  assert.strictEqual(sheet.views.get('January 2029').length, 3, 'not added twice');
+
+  // A month that appears later gets its own.
+  tapAt(eve, 'in', at(2029, 2, 1, 9));
+  await syncer(sheet, at(2029, 2, 1, 10)).syncOnce();
+  assert.deepStrictEqual(titles('February 2029'), ['Search', 'Most hours', 'Least hours']);
+});
+
+test('the Search tab is written when a month is added, and its search box is left alone', async () => {
+  const fay = person('Fay Find');
+  tapAt(fay, 'in', at(2029, 3, 5, 9));
+  const sheet = fakeSheet();
+  const sync = syncer(sheet, at(2029, 3, 5, 10));
+  await sync.syncOnce();
+  assert.strictEqual(sheet.formulas.length, 1);
+  assert.match(sheet.cell('Search', 'A5'), /^=.*'March 2029'!A2:G/);
+  assert.match(sheet.cell('Search', 'Q5'), /'March 2029 Logs'!A2:F/);
+
+  sheet.tabs.get('Search').set('B1', 'fay');
+  await sync.syncOnce();
+  assert.strictEqual(sheet.formulas.length, 1, 'nothing new, nothing rewritten');
+
+  tapAt(fay, 'out', at(2029, 4, 2, 9));
+  await syncer(sheet, at(2029, 4, 2, 10)).syncOnce();
+  assert.strictEqual(sheet.formulas.length, 2);
+  const hours = sheet.cell('Search', 'A5');
+  assert.ok(hours.indexOf("'April 2029'") < hours.indexOf("'March 2029'"), 'newest month first');
+  assert.strictEqual(sheet.cell('Search', 'B1'), 'fay');
+});
+
+test('the columns of what a sync wrote are fitted to it, and only those', async () => {
+  const gus = person('Gus Find');
+  tapAt(gus, 'in', at(2029, 5, 7, 9));
+  const sheet = fakeSheet();
+  await syncer(sheet, at(2029, 5, 7, 10)).syncOnce();
+  for (const title of ['May 2029', 'May 2029 Logs', 'Totals']) assert.ok(sheet.fitted[0].includes(title), title);
+  assert.ok(!sheet.fitted.flat().includes('Staffers') && !sheet.fitted.flat().includes('Search'));
+});
+
+test('each tab is styled once, and a new or re-made tab gets its turn', async () => {
+  const hal = person('Hal Style');
+  tapAt(hal, 'in', at(2029, 6, 4, 9));
+  const sheet = fakeSheet();
+  await syncer(sheet, at(2029, 6, 4, 10)).syncOnce();
+  for (const title of ['June 2029', 'June 2029 Logs', 'Totals', 'Staffers', 'Search']) {
+    assert.strictEqual(sheet.styled.filter((t) => t === title).length, 1, title);
+  }
+
+  await syncer(sheet, at(2029, 6, 4, 11)).syncOnce();
+  assert.strictEqual(sheet.styled.filter((t) => t === 'Search').length, 1, 'restyling by hand is left alone');
+
+  tapAt(hal, 'out', at(2029, 7, 2, 9));
+  sheet.tabs.delete('Search'); // someone deletes it; the Pi makes it again
+  await syncer(sheet, at(2029, 7, 2, 10)).syncOnce();
+  assert.strictEqual(sheet.styled.filter((t) => t === 'July 2029').length, 1);
+  assert.strictEqual(sheet.styled.filter((t) => t === 'Search').length, 2);
+  assert.strictEqual(sheet.styled.filter((t) => t === 'Totals').length, 1);
 });

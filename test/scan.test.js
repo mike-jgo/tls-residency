@@ -47,7 +47,7 @@ const scanner = createScanner({ store, now, mono, bootId: BOOT });
 let cardCounter = 0;
 function register(name) {
   const rfid = String(1000000000 + ++cardCounter);
-  store.createUser(name, 'S' + cardCounter, 'staffer', rfid);
+  store.createUser({ name, student_id: 'S' + cardCounter }, rfid);
   return rfid;
 }
 

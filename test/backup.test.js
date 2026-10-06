@@ -34,7 +34,7 @@ const snapshot = (dbPath) => JSON.parse(inServer(dbPath,
   'events:s.getEventsForUser(u.id).map(e=>[e.type,e.ts])}))))'));
 
 const seed = `
-  s.createUser('Ana','S1','staffer','111');
+  s.createUser({name:'Ana',student_id:'S1'},'111');
   const u=s.getUserByRfid('111');
   s.insertEvent(u.id,'in','2026-01-05T01:00:00.000Z','boot-a');
   s.insertEvent(u.id,'out','2026-01-05T05:00:00.000Z','boot-a');`;
@@ -61,7 +61,7 @@ test('a backup restores the database to exactly what it was', () => {
     const u=s.getUserByRfid('111');
     s.insertEvent(u.id,'in','2026-01-06T01:00:00.000Z','boot-b');
     s.setUserActive(u.id,false);
-    s.createUser('Mistake','S2','','222');`);
+    s.createUser({name:'Mistake',student_id:'S2'},'222');`);
   assert.notDeepStrictEqual(snapshot(dbPath), before);
 
   const done = restoreBackup({ backupPath: backup, dbPath });
@@ -76,7 +76,7 @@ test('the database being replaced is set aside, not deleted', () => {
 
   const backup = inServer(dbPath,
     seed + `console.log(await b.createBackup({source:s,dir:${JSON.stringify(dir)}}))`);
-  inServer(dbPath, "s.createUser('Later','S3','','333')");
+  inServer(dbPath, "s.createUser({name:'Later',student_id:'S3'},'333')");
   const replaced = snapshot(dbPath);
 
   const { setAside } = restoreBackup({ backupPath: backup, dbPath });
@@ -142,7 +142,7 @@ test('npm run restore puts a backup back, and refuses a bad file', async () => {
   const backup = inServer(dbPath,
     seed + `console.log(await b.createBackup({source:s,dir:${JSON.stringify(dir)}}))`);
   const before = snapshot(dbPath);
-  inServer(dbPath, "s.createUser('Mistake','S2','','222')");
+  inServer(dbPath, "s.createUser({name:'Mistake',student_id:'S2'},'222')");
 
   const env = { ...process.env, DB_PATH: dbPath, PORT: String(await freePort()) };
   const script = path.join(ROOT, 'scripts', 'restore.js');

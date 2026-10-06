@@ -1,4 +1,4 @@
-# TLS Office Residency
+# TLS Staffer Attendance Monitoring System
 
 RFID residency-hours tracker for a school media organization. A USB RFID reader
 plugs into a Raspberry Pi in the office, with a monitor, keyboard and mouse. The Pi
@@ -26,7 +26,8 @@ Pi (office, monitor + keyboard + mouse)
 ```
 
 - **Tap screen** (`/station`) — full-screen on the monitor, and where cards are read: the reader types each card number into this page. Shows IN / OUT / unknown card for every tap, who's in the office, and the **Shut down** button that ends the day.
-- **Admin site** (`/admin`) — register people, see who's in, view and export hours. Password-protected; open it from the tap screen or from any device on the office network.
+- **Register** (`/register`) — add a person and their card. No password, but it only opens on the office computer itself; open it from the tap screen.
+- **Admin site** (`/admin`) — edit and deactivate people, see who's in, view and export hours. Password-protected; open it from the tap screen or from any device on the office network.
 - **The log** — every tap also prints a line, so `journalctl` is a record of the day.
 
 Stack: Node.js + Express + SQLite. Three dependencies, no build step.
@@ -42,7 +43,7 @@ npm start
 ```
 
 ```
-Residency server running on http://localhost:3000
+Staffer Attendance Monitoring System running on http://localhost:3000
   Tap screen:  http://localhost:3000/station  (the reader types into this page)
   Admin:       http://localhost:3000/admin  (user: admin)
 
@@ -114,13 +115,25 @@ taps are refused (see *The clock* below). After that, people tap in and out. At
 the end of the day the last person clicks **Shut down** on the tap screen, waits for
 the screen to go blank, and unplugs it.
 
-**Registering someone.** Admin → People. Type their name and student ID. On the Pi,
-click the RFID box and have them tap their card — the reader types the number
-straight in. From another device, have them tap on the tap screen (it says *Not
-registered*), refresh the People page, pick the number out of the **Unrecognized
-taps** list and click "Use this card". That list holds the last 20
+**Registering someone.** On the Pi, click **Register** on the tap screen. The
+page (`/register`) is not part of admin: it asks for no password, and it only
+opens on the office computer itself, where the reader is. Fill in their name, ID
+number, section, status and Telegram handle (the @ is added for you). The sections and statuses on offer are listed at the top of
+`lib/people.js`. Click the Card number box and have them tap their card — the
+reader types the number straight in. If they already tapped on the tap screen (it
+said *Not registered*), pick the number out of the **Unrecognized taps** list
+instead and click "Use this ID". That list holds the last 20
 unrecognized cards, in memory only — it empties on restart, because it's a
 registration shortcut, not a record.
+
+**Something changes.** Admin → People → **Edit** on their row — a probie made
+regular, a new Telegram handle. Everything but the card can be changed. Or change
+it in the `Staffers` tab of the Google Sheet; the Pi picks it up within five
+minutes, or at once if you click the cloud.
+
+With a Google Sheet set up, registering, editing and deactivating all need the
+internet: the change is written to the sheet first and kept on the Pi only once
+Google has it. Offline, the Register and People pages say so and taps carry on as usual.
 
 **Someone leaves.** Admin → People → **Deactivate**. Their card stops working — a
 tap shows *Card deactivated* and records nothing — but every tap they ever made
@@ -140,7 +153,7 @@ seconds is ignored and logged as such; the screen keeps showing the first answer
 
 **Unknown cards.** If a tapped number isn't registered, the tap screen says so, the
 log shows `???  unknown card <number>`, and nothing is recorded. The number is then
-offered on the People page for registration.
+offered on the Register page.
 
 **Hours.** Each in→out pair is one session; residency hours are the sum. A person
 still checked in shows as an open session worth zero until they tap out.
@@ -212,7 +225,7 @@ Raspberry Pi OS with the desktop, set to log in automatically (the default).
 
    ```ini
    [Unit]
-   Description=TLS residency
+   Description=TLS Staffer Attendance Monitoring System
    After=network.target
 
    [Service]
@@ -317,8 +330,9 @@ same three commands.
 ## Google Sheets
 
 Optional. The Pi can publish residency to a Google spreadsheet, so hours can be
-read without the Pi being on. It is one-way: the database stays the record, the
-sheet is a copy, and nothing typed into the sheet comes back.
+read without the Pi being on. For taps and hours it is one-way: the database stays
+the record, the sheet is a copy, and nothing typed into those tabs comes back. The
+`Staffers` tab is the other way round — see below.
 
 The spreadsheet gets:
 
@@ -327,9 +341,53 @@ The spreadsheet gets:
 - **A log tab per month** — `October 2026 Logs`, … — with every tap that month,
   one per row.
 - **A `Totals` tab** — when the sheet was last synced, and all-time hours.
+- **A `Staffers` tab** — the directory: everyone's ID number, section, status,
+  Telegram handle, whether they are deactivated, and their card number.
 
-Tabs are created as needed. Don't type in them or re-sort them — the next sync
-writes over its own cells. Add your own tabs for anything else.
+- **A `Search` tab** — type a name or an ID number in cell B1 and it shows that
+  person's hours for every month, their details, and their taps, newest first.
+  A name matches on any part of it; an ID number has to be exact.
+
+Tabs are created as needed. Don't type in the hours, log or Totals tabs or re-sort
+them — the next sync writes over its own cells. Add your own tabs for anything else.
+
+The Pi styles each of its tabs once, when it first sees it — green header rows, and
+on the Search tab a box to type in. After that the look is yours: restyle a tab and
+it stays that way.
+
+After each sync the Pi widens the columns of the hours, log and Totals tabs it
+just wrote to fit their text, so a width you set by hand on those tabs won't last.
+The Staffers and Search tabs are left as you format them.
+
+**Sorting and filtering without moving anything.** The hours, log and Totals tabs
+each come with filter views, under *Data → Filter views*: **Most hours** and
+**Least hours** on the hours tabs, **Newest first** on the logs, and **Search** on
+all of them, which puts a search box on every column header. A filter view changes
+only what you see; the cells stay where the Pi put them. Sorting a tab the ordinary
+way does move them, and the next upload would then land on the wrong rows.
+
+**The `Staffers` tab is the record of who the staffers are**, and the people on the
+Pi are a copy of it. Edit it freely, and sort it if you like:
+
+- Change a cell and the Pi follows. Type `yes` under *Deactivated* to deactivate
+  someone; clear it to reactivate them.
+- A row is matched to a person by ID number, or failing that by card, so either
+  one can be corrected. Don't change both at once — that reads as a new person.
+- Deleting a row deactivates the person on the Pi. Nothing in the sheet can
+  delete taps.
+- A row the Pi can't use — a section that isn't on the list, an ID number or card
+  on two rows — is skipped, the person stays as they were, and the People page
+  says which row and why.
+- A row with no card number is someone waiting for a card: the People page lists
+  them and, on the Pi, a **Register** button that opens the register page with the
+  form filled in, ready for a tap.
+- Another device pointed at the same spreadsheet gets everyone, cards included,
+  from this tab. Give each device **its own spreadsheet for hours**, though: the
+  month and Totals tabs are written from one database and two would overwrite
+  each other.
+
+Anyone who can open the spreadsheet can read the card numbers, so share it with
+that in mind.
 
 The sync runs when the server starts, and a couple of seconds after any tap or
 roster change. With no internet it retries every minute, and taps not yet uploaded
@@ -426,7 +484,7 @@ has not yet run on a real module. When the hardware arrives, check on the Pi:
    prints the right time. (With wifi up, the Pi sets the hardware clock by itself.)
 2. *It carries the time.* Shut down, unplug for a few minutes, turn the wifi
    router off (or forget the network), and boot. The tap screen should go straight
-   to **Tap your card**, and `journalctl -u residency` should show
+   to **Tap your ID**, and `journalctl -u residency` should show
    `clock is set from the hardware clock`. A tap should be stamped with the right
    time.
 3. *A flat battery is caught.* Shut down, take the battery out, and boot without
@@ -453,5 +511,5 @@ right.
 
 - Per-person session history view in the admin area — currently a session discarded
   for a forgotten check-out can only be inspected or corrected with `sqlite3`.
-- The Unrecognized taps list on the People page doesn't update by itself; refresh
+- The Unrecognized taps list on the Register page doesn't update by itself; refresh
   it after the new card is tapped.

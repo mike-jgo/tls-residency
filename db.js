@@ -22,10 +22,13 @@ db.exec(`
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT    NOT NULL,
     student_id  TEXT,
-    role        TEXT,
+    section     TEXT,
+    status      TEXT,
+    telegram    TEXT,
     rfid        TEXT    NOT NULL UNIQUE,
     created_at  TEXT    NOT NULL,
-    active      INTEGER NOT NULL DEFAULT 1
+    active      INTEGER NOT NULL DEFAULT 1,
+    in_sheet    INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS events (
@@ -61,13 +64,36 @@ if (!db.pragma('table_info(users)').some((c) => c.name === 'active')) {
   db.exec('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
 }
 
+// The staffer directory's fields (lib/people.js) came later still. People
+// registered before them have none until someone edits them in. Those
+// databases also keep a `role` column, and later ones `year` and `course`,
+// which nothing reads any more.
+for (const column of ['section', 'status', 'telegram']) {
+  if (!db.pragma('table_info(users)').some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE users ADD COLUMN ${column} TEXT`);
+  }
+}
+
+// Whether the Staffers tab has ever listed them — see lib/roster.js. Not yet,
+// for everyone registered before the tab became the record.
+if (!db.pragma('table_info(users)').some((c) => c.name === 'in_sheet')) {
+  db.exec('ALTER TABLE users ADD COLUMN in_sheet INTEGER NOT NULL DEFAULT 0');
+}
+
 // ---- Prepared statements (compiled once, reused) -------------------------
 
 const stmt = {
   userByRfid:   db.prepare('SELECT * FROM users WHERE rfid = ?'),
+  userById:     db.prepare('SELECT * FROM users WHERE id = ?'),
   createUser:   db.prepare(
-    `INSERT INTO users (name, student_id, role, rfid, created_at)
-     VALUES (@name, @student_id, @role, @rfid, @created_at)`
+    `INSERT INTO users (name, student_id, section, status, telegram, rfid, created_at)
+     VALUES (@name, @student_id, @section, @status, @telegram, @rfid, @created_at)`
+  ),
+  // The card is not among them: a card stays with the person it was given to.
+  updateUser:   db.prepare(
+    `UPDATE users SET name = @name, student_id = @student_id, section = @section, status = @status,
+       telegram = @telegram
+     WHERE id = @id`
   ),
   getMeta:      db.prepare('SELECT value FROM meta WHERE key = ?').pluck(),
   setMeta:      db.prepare(
@@ -85,6 +111,20 @@ const stmt = {
   countBefore:  db.prepare(
     'SELECT COUNT(*) FROM events WHERE ts >= ? AND ts < ? AND id < ?'
   ).pluck(),
+  usersByStudentId: db.prepare('SELECT * FROM users WHERE student_id = ?'),
+  // For lib/roster.js's pull: the tab's version of a person.
+  fromSheet:    db.prepare(
+    `UPDATE users SET name = @name, student_id = @student_id, section = @section, status = @status,
+       telegram = @telegram, rfid = @rfid, active = @active, in_sheet = 1
+     WHERE id = @id`
+  ),
+  newFromSheet: db.prepare(
+    `INSERT INTO users (name, student_id, section, status, telegram, rfid, active, in_sheet, created_at)
+     VALUES (@name, @student_id, @section, @status, @telegram, @rfid, @active, 1, @created_at)`
+  ),
+  setCard:      db.prepare('UPDATE users SET rfid = ? WHERE id = ?'),
+  setInSheet:   db.prepare('UPDATE users SET in_sheet = 1 WHERE id = ?'),
+  forgetSheet:  db.prepare('UPDATE users SET in_sheet = 0'),
   setActive:    db.prepare('UPDATE users SET active = ? WHERE id = ?'),
   listUsers:    db.prepare('SELECT * FROM users ORDER BY name COLLATE NOCASE'),
 
@@ -116,21 +156,48 @@ const stmt = {
   `),
 };
 
+// Carry out lib/roster.js's pull(), all of it or none.
+const applyRoster = db.transaction((plan) => {
+  // Two people's cards may have been swapped in the tab, and no two rows may
+  // hold one card even for a moment — so park the cards that are changing.
+  for (const u of plan.update) stmt.setCard.run(`moving:${u.id}`, u.id);
+  for (const u of plan.update) {
+    stmt.fromSheet.run({ ...EMPTY_PERSON, ...u.person, id: u.id, rfid: u.rfid, active: u.active ? 1 : 0 });
+  }
+  for (const c of plan.create) {
+    stmt.newFromSheet.run({
+      ...EMPTY_PERSON, ...c.person, rfid: c.rfid, active: c.active ? 1 : 0, created_at: new Date().toISOString(),
+    });
+  }
+  for (const id of plan.deactivate) stmt.setActive.run(0, id);
+  for (const id of plan.seen) stmt.setInSheet.run(id);
+});
+
 // ---- Public helpers ------------------------------------------------------
+
+const EMPTY_PERSON = { student_id: null, section: null, status: null, telegram: null };
 
 module.exports = {
   getUserByRfid: (rfid) => stmt.userByRfid.get(rfid),
+  getUser:       (id)   => stmt.userById.get(id),
   listUsers:     ()     => stmt.listUsers.all(),
 
-  createUser(name, studentId, role, rfid) {
-    return stmt.createUser.run({
-      name,
-      student_id: studentId || null,
-      role: role || null,
-      rfid,
-      created_at: new Date().toISOString(),
-    });
+  // `person` holds the directory fields — see readPerson in lib/people.js.
+  // Any left out are stored empty.
+  createUser(person, rfid) {
+    return stmt.createUser.run({ ...EMPTY_PERSON, ...person, rfid, created_at: new Date().toISOString() });
   },
+  updateUser: (id, person) => stmt.updateUser.run({ ...EMPTY_PERSON, ...person, id }),
+
+  // Whoever else has this ID number: it is how a person is matched to their
+  // row in the sheet, so no two people may share one.
+  getOtherWithStudentId: (studentId, id = null) =>
+    stmt.usersByStudentId.all(studentId).find((u) => u.id !== id),
+
+  // For the sheet sync — see lib/roster.js.
+  applyRoster,
+  markInSheet: db.transaction((ids) => { for (const id of ids) stmt.setInSheet.run(id); }),
+  forgetSheet: () => stmt.forgetSheet.run(),
 
   setUserActive: (id, active) => stmt.setActive.run(active ? 1 : 0, id),
 

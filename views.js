@@ -5,9 +5,14 @@
  * no build step. Everything user-supplied goes through esc() first.
  */
 
+const fs = require('fs');
+const path = require('path');
+
 const ORG = process.env.ORG_NAME || 'TLS';
+const SYSTEM = 'Staffer Attendance Monitoring System';
 const TZ = process.env.TZ || 'Asia/Manila';
 const hoursLimit = require('./lib/hours').MAX_SESSION_HOURS;
+const { SECTIONS, STATUSES } = require('./lib/people');
 
 function esc(v) {
   return String(v == null ? '' : v)
@@ -51,8 +56,18 @@ const ICONS = {
 };
 const icon = (name) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 
+// The LaSallian's logo for the top left of every page: the star, then the
+// name. Read once and drawn inline, like the icons.
+const asset = (name) => fs.readFileSync(path.join(__dirname, 'assets', name), 'utf8').trim();
+const LOGO = `<span class="logo" role="img" aria-label="The LaSallian">${
+  asset('TLS_star_green.svg')}${asset('TLS_name_green.svg')}</span>`;
+
 // Shared by the admin pages and the tap screen.
 const BADGE_CSS = `
+  .brand{display:flex;align-items:center;gap:10px}
+  .logo{display:inline-flex;align-items:center;gap:8px}
+  .logo svg{height:1.7em;width:auto;flex:none}
+  .logo svg+svg{height:1.1em}
   svg.ic{width:1.15em;height:1.15em;fill:none;stroke:currentColor;stroke-width:2;
          stroke-linecap:round;stroke-linejoin:round;flex:none;vertical-align:-.2em}
   .sync{display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border-radius:999px;
@@ -87,11 +102,14 @@ const IDLE_RETURN_MS = 2 * 60 * 1000;
 
 function layout(title, body, active, local, sync) {
   const badge = sync ? syncBadge(sync) : null;
-  const links = [
-    ['/admin', 'Dashboard'],
-    ['/admin/users', 'People'],
-    ['/admin/hours', 'Hours'],
-  ];
+  // The register page is not an admin page: it links there, no more.
+  const links = active === '/register'
+    ? [['/register', 'Register'], ['/admin', 'Admin']]
+    : [
+      ['/admin', 'Dashboard'],
+      ['/admin/users', 'People'],
+      ['/admin/hours', 'Hours'],
+    ];
   if (local) links.push(['/station', 'Tap screen']);
   const nav = links.map(([href, label]) => {
     const cls = active === href ? ' class="on"' : '';
@@ -103,7 +121,8 @@ function layout(title, body, active, local, sync) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} · ${esc(ORG)} residency</title>
+<link rel="icon" type="image/png" href="/icon.png">
+<title>${esc(title)} · ${esc(ORG)} ${SYSTEM}</title>
 <style>
   :root{
     --ink:#12181f; --panel:#ffffff; --line:#e3e8ee; --muted:#647082;
@@ -139,9 +158,10 @@ function layout(title, body, active, local, sync) {
   .empty{color:var(--muted);padding:8px 0}
   form.row{display:flex;flex-wrap:wrap;gap:12px;align-items:end}
   label{display:block;font-size:13px;color:var(--muted);margin-bottom:5px}
-  input[type=text],input[type=date]{padding:9px 11px;border:1px solid var(--line);
+  input[type=text],input[type=date],select{padding:9px 11px;border:1px solid var(--line);
          border-radius:8px;font:inherit;background:#fff;min-width:160px}
-  input:focus{outline:2px solid var(--brand);outline-offset:1px;border-color:var(--brand)}
+  input:disabled{background:#f5f7fa;color:var(--muted)}
+  input:focus,select:focus{outline:2px solid var(--brand);outline-offset:1px;border-color:var(--brand)}
   .btn{padding:9px 16px;border:0;border-radius:8px;background:var(--brand);color:#fff;
        font:inherit;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
   .btn:hover{filter:brightness(1.05)}
@@ -153,6 +173,9 @@ function layout(title, body, active, local, sync) {
   .flash.ok{background:var(--in-bg);color:var(--in)}
   .flash.err{background:#fce8e6;color:var(--danger)}
   .scanbox{font-size:15px}
+  .acts{display:flex;gap:6px;align-items:center;justify-content:flex-end}
+  .wide{overflow-x:auto}
+  .wide th,.wide td{white-space:nowrap}
   .tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px}
   .tabs a{padding:7px 14px;border-radius:8px;background:#eef2f7;color:var(--ink);
           text-decoration:none;font-weight:600;font-size:14px}
@@ -167,7 +190,7 @@ function layout(title, body, active, local, sync) {
 </head>
 <body>
 <header><div class="bar">
-  <div class="brand">${esc(ORG)} <small>residency</small></div>
+  <div class="brand">${LOGO}<small>${SYSTEM}</small></div>
   <nav>${nav}</nav>
   ${badge ? `<form method="post" action="/admin/sync">
     <input type="hidden" name="back" value="${active}">
@@ -244,13 +267,49 @@ function dashboardPage({ currentlyIn, sync, local }) {
   return layout('Dashboard', body, '/admin', local, sync);
 }
 
-function usersPage({ users, flash, unknownScans = [], sync, local }) {
+// A dropdown that starts on nothing, so a choice has to be made.
+function choice(name, values, chosen) {
+  return `<select name="${name}" required>
+            <option value=""></option>${values.map((v) => `
+            <option${v === chosen ? ' selected' : ''}>${esc(v)}</option>`).join('')}
+          </select>`;
+}
+
+// The boxes for a person's details, shared by the register page and the edit
+// form on the People page.
+function personFields(p) {
+  return `<div><label>Name</label>
+          <input type="text" name="name" required autocomplete="off" value="${esc(p.name)}"></div>
+        <div><label>ID number</label>
+          <input type="text" name="student_id" required autocomplete="off" value="${esc(p.student_id)}"></div>
+        <div><label>Section</label>
+          ${choice('section', SECTIONS, p.section)}</div>
+        <div><label>Status</label>
+          ${choice('status', STATUSES, p.status)}</div>
+        <div><label>Telegram</label>
+          <input type="text" name="telegram" id="telegram" required autocomplete="off"
+                 placeholder="@handle" value="${esc(p.telegram)}"></div>`;
+}
+
+// Goes with personFields, inside a page's <script>.
+const TELEGRAM_JS = `
+      // The @ goes on by itself.
+      var telegram = document.getElementById('telegram');
+      if (telegram) telegram.addEventListener('input', function () {
+        var handle = telegram.value.replace(/^[@\\s]+/, '');
+        telegram.value = handle ? '@' + handle : '';
+      });`;
+
+// Registering someone: its own page, opened from the tap screen. Only on the
+// office computer, where the reader is — so no admin password, and a tap goes
+// straight into the Card number box.
+function registerPage({ flash, unknownScans = [], prefill = null, online = true }) {
   const flashHtml = flash
     ? `<div class="flash ${flash.type}">${esc(flash.text)}</div>` : '';
+  const p = prefill || {};
 
-  // The reader is at the office machine, not at whatever browser the admin is
-  // using, so a new card can't be tapped straight into the form above. These
-  // are the cards the reader saw and didn't recognize — click one to fill it in.
+  // Cards tapped on the tap screen before anyone opened this page — click one
+  // to fill it in.
   const unknownHtml = unknownScans.length
     ? `<div class="panel">
       <h2>Unrecognized taps (${unknownScans.length})</h2>
@@ -261,7 +320,7 @@ function usersPage({ users, flash, unknownScans = [], sync, local }) {
             <td class="mono">${esc(u.rfid)}</td>
             <td>${fmtDateTime(u.ts)}</td>
             <td><button type="button" class="btn ghost use-rfid"
-                        data-rfid="${esc(u.rfid)}">Use this card</button></td>
+                        data-rfid="${esc(u.rfid)}">Use this ID</button></td>
           </tr>`).join('')}</tbody>
       </table>
       <p class="caphint">
@@ -270,87 +329,147 @@ function usersPage({ users, flash, unknownScans = [], sync, local }) {
     </div>`
     : '';
 
+  const body = `
+    <h1>Register</h1>
+    <p class="sub">Add a staffer and their ID.</p>
+    ${flashHtml}
+    ${online ? `<div class="panel">
+      <h2>Register someone</h2>
+      <form method="post" action="/register" class="row scanbox">
+        ${personFields(p)}
+        <div><label>Card number — tap their ID now</label>
+          <input type="text" name="rfid" id="rfid" required autocomplete="off"
+                 placeholder="tap ID, or type the number"></div>
+        <button class="btn" type="submit">Add person</button>
+      </form>
+      <p class="caphint">
+        Click the Card number box and have them tap their ID — the reader types the number in.
+      </p>
+    </div>
+    ${unknownHtml}` : `<div class="panel">
+      <h2>Register someone</h2>
+      <span class="sync offline">${icon('offline')}Offline</span>
+      <p class="why">People are added in the Google Sheet, so that waits for the internet. Taps still work.</p>
+    </div>`}
+    <script>
+      // Put the cursor in the RFID box so a tap during registration lands there.
+      var rfid = document.getElementById('rfid');
+      if (rfid) rfid.focus();
+${TELEGRAM_JS}
+
+      // Copy an unrecognized card number into the form instead of retyping it.
+      Array.prototype.forEach.call(document.querySelectorAll('.use-rfid'), function (btn) {
+        btn.addEventListener('click', function () {
+          rfid.value = btn.getAttribute('data-rfid');
+          document.getElementsByName('name')[0].focus();
+        });
+      });
+    </script>`;
+  return layout('Register', body, '/register', true, null);
+}
+
+function usersPage({
+  users, flash, editing = null,
+  roster = { warnings: [], unlinked: [] }, online = true, sync, local,
+}) {
+  const flashHtml = flash
+    ? `<div class="flash ${flash.type}">${esc(flash.text)}</div>` : '';
+
   // Deactivated people keep their history and their card number; they are
   // listed apart so the roster is the people whose cards currently work.
   const personRow = (u, action, label, cls) => `
         <tr>
           <td>${esc(u.name)}</td>
           <td class="mono">${esc(u.student_id || '')}</td>
-          <td>${esc(u.role || '')}</td>
+          <td>${esc(u.section || '')}</td>
+          <td>${esc(u.status || '')}</td>
+          <td>${esc(u.telegram || '')}</td>
           <td class="mono">${esc(u.rfid)}</td>
-          <td>
+          <td>${online ? `<div class="acts">
+            <a class="btn ghost" href="/admin/users?edit=${u.id}">Edit</a>
             <form method="post" action="/admin/users/${u.id}/${action}"
                   class="${action}-person" data-name="${esc(u.name)}">
               <button class="btn ${cls}" type="submit">${label}</button>
             </form>
-          </td>
+          </div>` : ''}</td>
         </tr>`;
+  const columns = `<tr><th>Name</th><th>ID number</th><th>Section</th><th>Status</th><th>Telegram</th>
+          <th>Card number</th><th></th></tr>`;
   const current = users.filter((u) => u.active);
   const inactive = users.filter((u) => !u.active);
 
   const rows = current.length
     ? current.map((u) => personRow(u, 'deactivate', 'Deactivate', 'danger')).join('')
-    : `<tr><td colspan="5" class="empty">No one registered yet. Add your first person above.</td></tr>`;
+    : `<tr><td colspan="7" class="empty">No one registered yet. Register people on the office computer.</td></tr>`;
 
   const inactiveHtml = inactive.length
-    ? `<div class="panel">
+    ? `<div class="panel wide">
       <h2>Deactivated (${inactive.length})</h2>
       <table>
-        <thead><tr><th>Name</th><th>Student ID</th><th>Role</th><th>RFID</th><th></th></tr></thead>
+        <thead>${columns}</thead>
         <tbody>${inactive.map((u) => personRow(u, 'reactivate', 'Reactivate', 'ghost')).join('')}</tbody>
       </table>
       <p class="caphint">
-        Their cards don&#39;t record taps. Their hours stay in the report.
+        Their IDs don&#39;t record taps. Their hours stay in the report.
       </p>
     </div>`
     : '';
 
+  // Registering happens at the reader, so only link the register page there.
+  const canRegister = local && online;
+
+  // What the last look at the Staffers tab couldn't use, and the rows in it
+  // still waiting for a card — see lib/roster.js.
+  const rosterHtml = (roster.warnings.length ? `<div class="panel">
+      <h2>${icon('alert')} Staffers sheet (${roster.warnings.length})</h2>
+      ${roster.warnings.map((w) => `<div class="lost">${esc(w)}</div>`).join('')}
+    </div>` : '') + (roster.unlinked.length ? `<div class="panel wide">
+      <h2>In the sheet, no card number yet (${roster.unlinked.length})</h2>
+      <table>
+        <thead><tr><th>Row</th><th>Name</th><th>ID number</th><th>Section</th><th>Status</th><th></th></tr></thead>
+        <tbody>${roster.unlinked.map((r) => `
+          <tr>
+            <td>${r.n}</td>
+            <td>${esc(r.row[0])}</td>
+            <td class="mono">${esc(r.row[1])}</td>
+            <td>${esc(r.row[2])}</td>
+            <td>${esc(r.row[3])}</td>
+            <td>${canRegister
+    ? `<a class="btn ghost" href="/register?from=${encodeURIComponent(r.row[1])}">Register</a>` : ''}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>` : '');
+
   const body = `
     <h1>People</h1>
-    <p class="sub">Register staffers and manage the roster.</p>
+    <p class="sub">Manage the roster.</p>
     ${flashHtml}
-    <div class="panel">
-      <h2>Register someone</h2>
-      <form method="post" action="/admin/users" class="row scanbox">
-        <div><label>Name</label>
-          <input type="text" name="name" required autocomplete="off"></div>
-        <div><label>Student ID</label>
-          <input type="text" name="student_id" autocomplete="off"></div>
-        <div><label>Role (optional)</label>
-          <input type="text" name="role" autocomplete="off"></div>
-        <div><label>RFID number — tap their card now</label>
-          <input type="text" name="rfid" id="rfid" required autocomplete="off"
-                 placeholder="tap card, or type the number"></div>
-        <button class="btn" type="submit">Add person</button>
+    ${online ? '' : `<div class="panel">
+      <h2>Changes</h2>
+      <span class="sync offline">${icon('offline')}Offline</span>
+      <p class="why">People are changed in the Google Sheet, so that waits for the internet. Taps still work.</p>
+    </div>`}
+    ${editing && online ? `<div class="panel">
+      <h2>Edit ${esc(editing.name)}</h2>
+      <form method="post" action="/admin/users/${editing.id}" class="row scanbox">
+        ${personFields(editing)}
+        <div><label>Card number</label>
+          <input type="text" class="mono" value="${esc(editing.rfid)}" disabled></div>
+        <button class="btn" type="submit">Save</button>
+        <a class="btn ghost" href="/admin/users">Cancel</a>
       </form>
-      <p class="caphint">
-        ${local
-    ? 'Click the RFID box and have them tap their card — the reader types the number in.'
-    : 'Have them tap their card on the tap screen, then refresh this page and pick the card from the Unrecognized taps list below.'}
-      </p>
-    </div>
-    ${unknownHtml}
-    <div class="panel">
+    </div>` : ''}
+    ${canRegister ? '<p><a class="btn" href="/register">Register someone</a></p>' : ''}
+    ${rosterHtml}
+    <div class="panel wide">
       <h2>Roster (${current.length})</h2>
       <table>
-        <thead><tr><th>Name</th><th>Student ID</th><th>Role</th><th>RFID</th><th></th></tr></thead>
+        <thead>${columns}</thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
     ${inactiveHtml}
-    <script>
-      // Put the cursor in the RFID box so a tap during registration lands there.
-      var rfid = document.getElementById('rfid');
-      if (rfid) rfid.focus();
-
-      // Copy an unrecognized card number into the form instead of retyping it.
-      Array.prototype.forEach.call(document.querySelectorAll('.use-rfid'), function (btn) {
-        btn.addEventListener('click', function () {
-          if (!rfid) return;
-          rfid.value = btn.getAttribute('data-rfid');
-          document.getElementsByName('name')[0].focus();
-        });
-      });
+    <script>${TELEGRAM_JS}
 
       // Confirm deactivations. The name travels in a data attribute rather than an
       // inline onsubmit: esc() renders an apostrophe as &#39;, the HTML parser
@@ -359,7 +478,7 @@ function usersPage({ users, flash, unknownScans = [], sync, local }) {
       Array.prototype.forEach.call(document.querySelectorAll('.deactivate-person'), function (form) {
         form.addEventListener('submit', function (e) {
           var name = form.getAttribute('data-name');
-          if (!confirm('Deactivate ' + name + '? Their card stops working. Their hours history is kept.')) e.preventDefault();
+          if (!confirm('Deactivate ' + name + '? Their ID stops working. Their hours history is kept.')) e.preventDefault();
         });
       });
     </script>`;
@@ -443,7 +562,8 @@ function stationPage({ readerOnly = true } = {}) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tap screen · ${esc(ORG)} residency</title>
+<link rel="icon" type="image/png" href="/icon.png">
+<title>Tap screen · ${esc(ORG)} ${SYSTEM}</title>
 <style>
   :root{
     --ink:#12181f; --panel:#ffffff; --line:#e3e8ee; --muted:#647082; --bg:#f5f7fa;
@@ -522,9 +642,10 @@ function stationPage({ readerOnly = true } = {}) {
 <div id="unfocused">${icon('click')}Click to resume</div>
 <div id="offline" role="status"><span class="spin"></span>Reconnecting…</div>
 <header>
-  <div class="brand">${esc(ORG)} <small>residency</small></div>
+  <div class="brand">${LOGO}<small>${SYSTEM}</small></div>
   <div id="now"></div>
   <button type="button" id="sync" class="sync" title="Sync now"></button>
+  <a href="/register">Register</a>
   <a href="/admin">Admin</a>
   <button type="button" id="shut-open">Shut down</button>
 </header>
@@ -588,10 +709,10 @@ function stationPage({ readerOnly = true } = {}) {
       } else if (t.status === 'unknown') {
         main.className = 'main bad';
         box.appendChild(el('div', 'big', 'Not registered'));
-        box.appendChild(el('div', 'detail', 'Card ' + t.rfid + ' isn’t registered. Ask an admin to add it.'));
+        box.appendChild(el('div', 'detail', 'Card number ' + t.rfid + ' isn’t registered. Click Register to add it.'));
       } else if (t.status === 'inactive') {
         main.className = 'main bad';
-        box.appendChild(el('div', 'big', 'Card deactivated'));
+        box.appendChild(el('div', 'big', 'ID deactivated'));
         box.appendChild(el('div', 'detail', 'Nothing was recorded. Ask an admin to reactivate it.'));
       } else if (t.status === 'clock') {
         main.className = 'main bad';
@@ -600,7 +721,7 @@ function stationPage({ readerOnly = true } = {}) {
       } else {
         main.className = 'main bad';
         box.appendChild(el('div', 'big', 'Not recorded'));
-        box.appendChild(el('div', 'detail', 'Couldn’t reach the residency server. Tap again in a moment.'));
+        box.appendChild(el('div', 'detail', 'Couldn’t reach the server. Tap again in a moment.'));
       }
     } else if (!status.clockReady) {
       main.className = 'main idle';
@@ -611,7 +732,7 @@ function stationPage({ readerOnly = true } = {}) {
       box.appendChild(el('div', 'detail', 'Needs wifi. Taps start in a moment.'));
     } else {
       main.className = 'main idle';
-      box.appendChild(el('div', 'big', 'Tap your card'));
+      box.appendChild(el('div', 'big', 'Tap your ID'));
       box.appendChild(el('div', 'detail', 'Once when you arrive, once when you leave.'));
     }
     main.appendChild(box);
@@ -793,4 +914,4 @@ function stationPage({ readerOnly = true } = {}) {
 </html>`;
 }
 
-module.exports = { dashboardPage, usersPage, hoursPage, stationPage, syncBadge };
+module.exports = { dashboardPage, registerPage, usersPage, hoursPage, stationPage, syncBadge };

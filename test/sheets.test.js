@@ -99,6 +99,80 @@ test('new tabs are made big enough to write a month into', async () => {
   assert.ok(requests[0].addSheet.properties.gridProperties.rowCount >= 10000);
 });
 
+test('filter views are added by sheet id, sorted without touching the cells', async () => {
+  const google = fakeGoogle((url) => reply(200, url.includes('?fields=')
+    ? { sheets: [{ properties: { sheetId: 7, title: 'Totals' }, filterViews: [{ title: 'Search' }] }, { properties: { sheetId: 8, title: 'Notes' } }] }
+    : {}));
+  const client = createSheetsClient({ spreadsheetId: 'abc', keyFile, fetch: google.fetch });
+  assert.deepStrictEqual(await client.describeTabs(), [
+    { title: 'Totals', sheetId: 7, views: ['Search'] }, { title: 'Notes', sheetId: 8, views: [] },
+  ]);
+
+  await client.dressTabs([{
+    sheetId: 7, frozen: 3, views: [{ title: 'Most hours', headerRow: 2, columns: 7, sort: [2, 'DESCENDING'] }],
+  }]);
+  const { requests } = JSON.parse(google.calls[google.calls.length - 1].body);
+  assert.strictEqual(requests[0].updateSheetProperties.properties.gridProperties.frozenRowCount, 3);
+  assert.deepStrictEqual(requests[1].addFilterView.filter, {
+    title: 'Most hours',
+    range: { sheetId: 7, startRowIndex: 2, startColumnIndex: 0, endColumnIndex: 7 },
+    sortSpecs: [{ dimensionIndex: 2, sortOrder: 'DESCENDING' }],
+  });
+});
+
+test('how a tab looks is sent as merges, cell formats and sizes', async () => {
+  const google = fakeGoogle();
+  const client = createSheetsClient({ spreadsheetId: 'abc', keyFile, fetch: google.fetch });
+  await client.formatTabs([{
+    sheetId: 7, frozen: 4,
+    merges: [{ rows: [0, 1], columns: [1, 4] }],
+    cells: [
+      { rows: [3, 4], columns: [0, 8], format: { textFormat: { bold: true }, backgroundColor: { red: 0 } } },
+      { format: { padding: { left: 10 } } },
+    ],
+    widths: [{ columns: [1, 2], pixels: 200 }],
+    heights: [{ rows: [0, 1], pixels: 36 }],
+  }]);
+  const { requests } = JSON.parse(google.calls[1].body);
+  assert.deepStrictEqual(requests.map((r) => Object.keys(r)[0]),
+    ['updateSheetProperties', 'mergeCells', 'repeatCell', 'repeatCell', 'updateDimensionProperties', 'updateDimensionProperties']);
+  assert.deepStrictEqual(requests[3].repeatCell.range, { sheetId: 7 }, 'no rows or columns: the whole tab');
+  assert.deepStrictEqual(requests[1].mergeCells.range,
+    { sheetId: 7, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 1, endColumnIndex: 4 });
+  // Only what the format names is touched; the rest of the cell is left as it is.
+  assert.strictEqual(requests[2].repeatCell.fields, 'userEnteredFormat(textFormat,backgroundColor)');
+  assert.deepStrictEqual(requests[4].updateDimensionProperties.range, { sheetId: 7, dimension: 'COLUMNS', startIndex: 1, endIndex: 2 });
+  assert.strictEqual(requests[5].updateDimensionProperties.range.dimension, 'ROWS');
+});
+
+test('columns are fitted a whole tab at a time', async () => {
+  const google = fakeGoogle();
+  const client = createSheetsClient({ spreadsheetId: 'abc', keyFile, fetch: google.fetch });
+  await client.fitColumns([7, 8]);
+  assert.deepStrictEqual(JSON.parse(google.calls[1].body).requests, [
+    { autoResizeDimensions: { dimensions: { sheetId: 7, dimension: 'COLUMNS' } } },
+    { autoResizeDimensions: { dimensions: { sheetId: 8, dimension: 'COLUMNS' } } },
+  ]);
+});
+
+test('columns are taken out of a tab by its sheet id', async () => {
+  const google = fakeGoogle((url) => reply(200, url.includes('?fields=')
+    ? { sheets: [{ properties: { sheetId: 7, title: 'Totals' } }, { properties: { sheetId: 8, title: 'Staffers' } }] }
+    : {}));
+  const client = createSheetsClient({ spreadsheetId: 'abc', keyFile, fetch: google.fetch });
+  await client.deleteColumns('Staffers', [5, 7]);
+  assert.deepStrictEqual(JSON.parse(google.calls[google.calls.length - 1].body).requests, [
+    { deleteDimension: { range: { sheetId: 8, dimension: 'COLUMNS', startIndex: 5, endIndex: 7 } } },
+  ]);
+});
+
+test('formulas are sent to be worked out, unlike everything else', async () => {
+  const google = fakeGoogle();
+  const client = createSheetsClient({ spreadsheetId: 'abc', keyFile, fetch: google.fetch });
+  await client.writeFormulas([{ range: "'Search'!A5:A5", values: [['=1+1']] }]);
+  assert.strictEqual(JSON.parse(google.calls[1].body).valueInputOption, 'USER_ENTERED');
+});
+
 test('no network is reported as offline', async () => {
   const fetch = async () => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } }); };
   const client = createSheetsClient({ spreadsheetId: 'abc', keyFile, fetch });

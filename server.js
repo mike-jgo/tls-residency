@@ -9,6 +9,8 @@ const store = require('./db');
 const report = require('./lib/report');
 const dates = require('./lib/dates');
 const scan = require('./lib/scan');
+const people = require('./lib/people');
+const roster = require('./lib/roster');
 const machine = require('./lib/machine');
 const backup = require('./lib/backup');
 const sheets = require('./lib/sheets');
@@ -48,11 +50,11 @@ function logTime(iso) {
 function logScan(result) {
   const stamp = logTime(result.time || new Date().toISOString());
   if (result.status === 'unknown') {
-    console.log(`${stamp}  ???   unknown card ${result.rfid}`);
+    console.log(`${stamp}  ???   unknown ID — card number ${result.rfid}`);
   } else if (result.status === 'clock') {
     console.log(`${stamp}  WAIT  clock not set yet — tap not recorded (${result.rfid})`);
   } else if (result.status === 'inactive') {
-    console.log(`${stamp}  ---   deactivated card — tap not recorded (${result.name})`);
+    console.log(`${stamp}  ---   deactivated ID — tap not recorded (${result.name})`);
   } else if (result.status === 'ignored') {
     console.log(`${stamp}  ...   repeat tap ignored (${result.rfid})`);
   } else {
@@ -104,7 +106,7 @@ function requireAdmin(req, res, next) {
     const [user, pass] = Buffer.from(encoded, 'base64').toString().split(':');
     if (user === ADMIN_USER && pass === ADMIN_PASSWORD) return next();
   }
-  res.set('WWW-Authenticate', 'Basic realm="Residency admin"');
+  res.set('WWW-Authenticate', 'Basic realm="Staffer Attendance Monitoring System admin"');
   return res.status(401).send('Authentication required.');
 }
 
@@ -140,52 +142,117 @@ app.get('/admin/users', (req, res) => {
   const flash = req.query.ok
     ? { type: 'ok', text: req.query.ok }
     : req.query.err ? { type: 'err', text: req.query.err } : null;
+  // ?edit=<id> opens that person's details.
+  const editing = req.query.edit ? store.getUser(Number(req.query.edit)) : null;
   res.send(views.usersPage({
-    users: store.listUsers(), flash, unknownScans: scanner.unknownScans,
+    users: store.listUsers(), flash, editing,
+    roster: sync ? sync.status().roster : { warnings: [], unlinked: [] },
+    online: sheetReachable(),
     sync: syncStatus(), local: isLocal(req),
   }));
 });
 
-// Register a person. RFID must be unique.
-app.post('/admin/users', (req, res) => {
-  const name = String(req.body.name || '').trim();
-  const rfid = String(req.body.rfid || '').trim();
-  const studentId = String(req.body.student_id || '').trim();
-  const role = String(req.body.role || '').trim();
+// A change to a person goes to the Staffers tab first, and `apply` saves it
+// here only once Google has it: the sheet is the record of who the staffers
+// are (lib/roster.js). With no spreadsheet configured, this device is all
+// there is.
+async function saveStaffer(person, own, apply) {
+  if (!sync) return apply();
+  return sync.saveStaffer(roster.rowOf(person), own, apply);
+}
+const notSaved = (e) => encodeURIComponent(e.offline ? 'Offline — not saved.' : `Not saved — ${e.message}`);
+// People are changed in the sheet first, so not without it.
+const sheetReachable = () => !sync || sync.status().state !== 'offline';
 
-  if (!name || !rfid) {
-    return res.redirect('/admin/users?err=' + encodeURIComponent('Name and a tapped RFID are both required.'));
+// ---- Registration --------------------------------------------------------
+// Its own page, outside admin: registering means tapping the new card, and the
+// reader is at the office computer. So it opens there only, like the tap
+// screen, and asks for no password.
+app.use('/register', (req, res, next) => {
+  if (isLocal(req)) return next();
+  res.status(403).type('text/plain').send('Registration only opens on the office computer itself.');
+});
+
+app.get('/register', (req, res) => {
+  const flash = req.query.ok
+    ? { type: 'ok', text: req.query.ok }
+    : req.query.err ? { type: 'err', text: req.query.err } : null;
+  // ?from=<ID number> fills the form in from a Staffers row that has no card here.
+  const unlinked = sync ? sync.status().roster.unlinked : [];
+  const from = unlinked.find((r) => r.person && r.person.student_id === req.query.from);
+  res.send(views.registerPage({
+    flash, unknownScans: scanner.unknownScans, prefill: from ? from.person : null,
+    online: sheetReachable(),
+  }));
+});
+
+// Register a person. Their ID number and their card must each be theirs alone.
+app.post('/register', async (req, res) => {
+  const rfid = String(req.body.rfid || '').trim();
+  const { person, error } = people.readPerson(req.body);
+
+  if (error) return res.redirect('/register?err=' + encodeURIComponent(error));
+  if (!/^\d{1,64}$/.test(rfid)) {
+    return res.redirect('/register?err=' + encodeURIComponent('Tap their ID, or type its card number — all digits.'));
+  }
+  const { name } = person;
+  const namesake = store.getOtherWithStudentId(person.student_id);
+  if (namesake) {
+    return res.redirect('/register?err=' + encodeURIComponent(`ID number ${person.student_id} already belongs to ${namesake.name}.`));
   }
   const existing = store.getUserByRfid(rfid);
   if (existing) {
-    const hint = existing.active ? '' : ' They are deactivated — reactivate them instead.';
-    return res.redirect('/admin/users?err=' + encodeURIComponent(`That card is already registered to ${existing.name}.${hint}`));
+    const hint = existing.active ? '' : ' They are deactivated — ask an admin to reactivate them.';
+    return res.redirect('/register?err=' + encodeURIComponent(`That card number is already registered to ${existing.name}.${hint}`));
   }
   try {
-    store.createUser(name, studentId, role, rfid);
+    await saveStaffer({ ...person, active: 1, rfid }, null, () => store.createUser(person, rfid));
     scanner.forgetUnknown(rfid);
     kickSync(true);
-    res.redirect('/admin/users?ok=' + encodeURIComponent(`${name} registered.`));
+    res.redirect('/register?ok=' + encodeURIComponent(`${name} registered.`));
   } catch (e) {
-    res.redirect('/admin/users?err=' + encodeURIComponent('Could not save — ' + e.message));
+    res.redirect('/register?err=' + notSaved(e));
+  }
+});
+
+// Change a person's details. Their card is not one of them.
+app.post('/admin/users/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const user = store.getUser(id);
+  if (!user) return res.redirect('/admin/users?err=' + encodeURIComponent('No such person.'));
+  const { person, error } = people.readPerson(req.body);
+  if (error) return res.redirect(`/admin/users?edit=${id}&err=` + encodeURIComponent(error));
+  const namesake = store.getOtherWithStudentId(person.student_id, id);
+  if (namesake) {
+    return res.redirect(`/admin/users?edit=${id}&err=` + encodeURIComponent(`ID number ${person.student_id} already belongs to ${namesake.name}.`));
+  }
+  try {
+    await saveStaffer({ ...person, active: user.active, rfid: user.rfid }, user, () => store.updateUser(id, person));
+    showStatus(); // their name may be on the tap screen
+    kickSync(true);
+    res.redirect('/admin/users?ok=' + encodeURIComponent(`${person.name} saved.`));
+  } catch (e) {
+    res.redirect(`/admin/users?edit=${id}&err=` + notSaved(e));
   }
 });
 
 // Deactivate rather than delete: the person's card stops working, but their
 // residency history stays in the database and in the hours report.
-app.post('/admin/users/:id/deactivate', (req, res) => {
-  store.setUserActive(Number(req.params.id), false);
-  showStatus(); // they may have been checked in
-  kickSync(true);
-  res.redirect('/admin/users?ok=' + encodeURIComponent('Person deactivated. Their history is kept.'));
-});
+async function setActive(req, res, active, done) {
+  const user = store.getUser(Number(req.params.id));
+  if (!user) return res.redirect('/admin/users?err=' + encodeURIComponent('No such person.'));
+  try {
+    await saveStaffer({ ...user, active }, user, () => store.setUserActive(user.id, active));
+    showStatus(); // they may have been checked in
+    kickSync(true);
+    res.redirect('/admin/users?ok=' + encodeURIComponent(done));
+  } catch (e) {
+    res.redirect('/admin/users?err=' + notSaved(e));
+  }
+}
 
-app.post('/admin/users/:id/reactivate', (req, res) => {
-  store.setUserActive(Number(req.params.id), true);
-  showStatus();
-  kickSync(true);
-  res.redirect('/admin/users?ok=' + encodeURIComponent('Person reactivated.'));
-});
+app.post('/admin/users/:id/deactivate', (req, res) => setActive(req, res, false, 'Person deactivated. Their history is kept.'));
+app.post('/admin/users/:id/reactivate', (req, res) => setActive(req, res, true, 'Person reactivated.'));
 
 // ---- Hours report --------------------------------------------------------
 // Built in lib/report.js, which the sheet sync shares.
@@ -241,13 +308,13 @@ app.get('/admin/hours.csv', (req, res) => {
     const s = String(v == null ? '' : v);
     return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
-  // "Not counted" travels with the numbers: a discarded session shows up as a
+  // "Uncounted sessions" travels with the numbers: a discarded session shows up as a
   // silent zero otherwise, and this is the file someone signs off residency on.
-  const lines = [['Name', 'Student ID', 'Hours', 'Sessions', 'Still in', 'Not counted', 'Deactivated'].join(',')];
+  const lines = [['Name', 'Student ID', 'Hours', 'Sessions', 'Still in', 'Uncounted sessions', 'Deactivated'].join(',')];
   for (const r of report) {
     lines.push([
       r.name, r.student_id, r.hours.toFixed(2), r.sessions,
-      r.open ? 'yes' : '', r.invalid ? 'yes' : '', r.active ? '' : 'yes',
+      r.open ? 'yes' : '', r.uncounted.length || '', r.active ? '' : 'yes',
     ].map(escCsv).join(','));
   }
   const label = (start || 'all') + '_to_' + (end || 'now');
@@ -362,10 +429,13 @@ app.post('/station/shutdown', fromTapScreen, (req, res) => {
 // On the office computer the front page is the tap screen; elsewhere, admin.
 app.get('/', (req, res) => res.redirect(isLocal(req) ? '/station' : '/admin'));
 app.get('/healthz', (req, res) => res.json({ ok: true }));
+// The browser tab's icon, for every page.
+app.get('/icon.png', (req, res) => res.sendFile(path.join(__dirname, 'assets', 'icon.png')));
 
 app.listen(PORT, () => {
-  console.log(`Residency server running on http://localhost:${PORT}`);
+  console.log(`Staffer Attendance Monitoring System running on http://localhost:${PORT}`);
   console.log(`  Tap screen:  http://localhost:${PORT}/station  (the reader types into this page)`);
+  console.log(`  Register:    http://localhost:${PORT}/register  (this computer only)`);
   console.log(`  Admin:       http://localhost:${PORT}/admin  (user: ${ADMIN_USER})`);
   if (ADMIN_PASSWORD === 'changeme') {
     console.log('  WARNING: using default admin password — set ADMIN_PASSWORD before deploying.');

@@ -1,7 +1,7 @@
 {
   "name": "tls-residency",
   "version": "1.0.0",
-  "description": "RFID residency-hours system for a school media organization",
+  "description": "Staffer Attendance Monitoring System: RFID residency hours for a school media organization",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
