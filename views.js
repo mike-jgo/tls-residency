@@ -64,10 +64,6 @@ const LOGO = `<span class="logo" role="img" aria-label="The LaSallian">${
 
 // Shared by the admin pages and the tap screen.
 const BADGE_CSS = `
-  .brand{display:flex;align-items:center;gap:10px}
-  .logo{display:inline-flex;align-items:center;gap:8px}
-  .logo svg{height:1.7em;width:auto;flex:none}
-  .logo svg+svg{height:1.1em}
   svg.ic{width:1.15em;height:1.15em;fill:none;stroke:currentColor;stroke-width:2;
          stroke-linecap:round;stroke-linejoin:round;flex:none;vertical-align:-.2em}
   .sync{display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border-radius:999px;
@@ -79,6 +75,65 @@ const BADGE_CSS = `
   .sync.pending{background:#e8f0fe;color:var(--brand)}
   .sync.offline{background:var(--out-bg);color:var(--out)}
   .sync.error{background:#fce8e6;color:var(--danger)}`;
+
+// ---- The navbar ------------------------------------------------------------
+// The bar across the top of every page — the admin pages, Register, the sign-in
+// page and the tap screen — so they can't drift apart:
+//
+//   links    [[href, label]]; `active` is the href of the page being shown
+//   middle   HTML between the logo and the links (the tap screen's clock);
+//            give it class="mid"
+//   actions  the buttons on the right, as HTML: a button with class="act"
+//            (add "danger" for one that needs care), or the sync badge
+//   wide     the bar runs the width of the window, as the tap screen does,
+//            instead of lining up with a page's 960px column
+function navbar({ links = [], active = '', middle = '', actions = [], wide = false }) {
+  const nav = links.map(([href, label]) => `<a href="${href}"${active === href ? ' class="on"' : ''}>${label}</a>`).join('');
+  return `<header class="navbar${wide ? ' wide' : ''}"><div class="bar">
+  <div class="brand">${LOGO}<small>${SYSTEM}</small></div>
+  ${middle}
+  ${nav ? `<nav>${nav}</nav>` : ''}
+  ${actions.length ? `<div class="acts">${actions.join('\n  ')}</div>` : ''}
+</div></header>`;
+}
+
+const NAVBAR_CSS = `
+  .navbar{background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0}
+  .bar{max-width:960px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:18px}
+  /* The tap screen doesn't scroll, and its overlays must cover the bar. */
+  .navbar.wide{position:static}
+  .navbar.wide .bar{max-width:none;padding:14px 28px}
+  /* Only the system's name gives way when the bar is tight: it takes two
+     lines, and the links and buttons each stay on one. */
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.02em;min-width:0}
+  .brand small{color:var(--muted);font-weight:500;letter-spacing:0;line-height:1.3}
+  .logo{display:inline-flex;align-items:center;gap:8px;flex:none}
+  .logo svg{height:1.7em;width:auto;flex:none}
+  .logo svg+svg{height:1.1em}
+  .navbar nav{display:flex;gap:18px;margin-left:auto;flex:none;white-space:nowrap}
+  .navbar nav a{color:var(--muted);text-decoration:none;font-weight:500}
+  .navbar nav a.on,.navbar nav a:hover{color:var(--brand)}
+  .navbar .mid{margin-left:auto;white-space:nowrap}
+  .navbar .mid+nav{margin-left:0}
+  .acts{display:flex;align-items:center;gap:12px;flex:none}
+  .acts form{margin:0}
+  .navbar .act{font:inherit;font-weight:600;padding:9px 16px;border:0;border-radius:8px;
+               background:#eef2f7;color:var(--ink);cursor:pointer;white-space:nowrap}
+  .navbar .act:hover{filter:brightness(.97)}
+  .navbar .act.danger{color:var(--danger)}
+  @media (max-width:900px){
+    .brand small{display:none}
+    .navbar.wide .bar{flex-wrap:wrap;gap:8px 16px}
+    .navbar.wide .mid{order:4;width:100%;margin-left:0}
+    .navbar.wide nav{margin-left:auto}
+  }
+  /* A phone: the bar stacks. */
+  @media (max-width:640px){
+    .bar,.navbar.wide .bar{flex-wrap:wrap;gap:8px 16px;padding:10px 14px}
+    .acts{margin-left:auto}
+    .navbar nav,.navbar.wide nav{order:3;width:100%;margin-left:0;flex-wrap:wrap}
+    .navbar .mid{order:4;width:100%;margin-left:0}
+  }`;
 
 // The few words beside the cloud. `status` is lib/sync.js's status().
 function syncBadge(status) {
@@ -111,10 +166,17 @@ function layout(title, body, active, local, sync) {
       ['/admin/hours', 'Hours'],
     ];
   if (local) links.push(['/station', 'Tap screen']);
-  const nav = links.map(([href, label]) => {
-    const cls = active === href ? ' class="on"' : '';
-    return `<a href="${href}"${cls}>${label}</a>`;
-  }).join('');
+  const actions = [];
+  if (active.startsWith('/admin') && active !== '/admin/login') {
+    actions.push('<form method="post" action="/admin/logout"><button class="act" type="submit">Sign out</button></form>');
+  }
+  // data-sync-badge: the dashboard keeps it up to date (dashboardPage).
+  if (badge) {
+    actions.push(`<form method="post" action="/admin/sync">
+    <input type="hidden" name="back" value="${active}">
+    <button class="sync ${badge.state}" type="submit" title="Sync now" data-sync-badge>${icon(badge.state)}${esc(badge.label)}</button>
+  </form>`);
+  }
 
   return `<!doctype html>
 <html lang="en">
@@ -132,13 +194,6 @@ function layout(title, body, active, local, sync) {
   *{box-sizing:border-box}
   body{margin:0;font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
        color:var(--ink);background:#f5f7fa}
-  header{background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0}
-  .bar{max-width:960px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:22px}
-  .brand{font-weight:700;letter-spacing:.02em}
-  .brand small{color:var(--muted);font-weight:500;letter-spacing:0}
-  nav{display:flex;gap:18px;margin-left:auto;flex-wrap:wrap}
-  nav a{color:var(--muted);text-decoration:none;font-weight:500}
-  nav a.on,nav a:hover{color:var(--brand)}
   main{max-width:960px;margin:0 auto;padding:28px 20px 60px}
   h1{font-size:22px;margin:0 0 4px}
   .sub{color:var(--muted);margin:0 0 24px}
@@ -160,6 +215,10 @@ function layout(title, body, active, local, sync) {
   label{display:block;font-size:13px;color:var(--muted);margin-bottom:5px}
   input[type=text],input[type=password],input[type=date],select{padding:9px 11px;border:1px solid var(--line);
          border-radius:8px;font:inherit;background:#fff;min-width:160px}
+  /* Safari draws its own dropdown, shorter than the boxes beside it, unless
+     told not to — so the arrow is drawn here instead. */
+  select{appearance:none;-webkit-appearance:none;padding-right:32px;color:var(--ink);
+         background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23647082' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 11px center}
   input:disabled{background:#f5f7fa;color:var(--muted)}
   input:focus,select:focus{outline:2px solid var(--brand);outline-offset:1px;border-color:var(--brand)}
   .btn{padding:9px 16px;border:0;border-radius:8px;background:var(--brand);color:#fff;
@@ -172,6 +231,13 @@ function layout(title, body, active, local, sync) {
   .flash{border-radius:8px;padding:11px 14px;margin-bottom:20px;font-weight:500}
   .flash.ok{background:var(--in-bg);color:var(--in)}
   .flash.err{background:#fce8e6;color:var(--danger)}
+  /* A save that worked is also announced where it can't be missed. */
+  .toast{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:10;max-width:min(560px,calc(100vw - 28px));
+         display:flex;align-items:flex-start;gap:12px;padding:13px 16px;border-radius:10px;font-weight:600;
+         background:var(--in);color:#fff;box-shadow:0 8px 28px rgba(18,24,31,.22);transition:opacity .3s,transform .3s}
+  .toast.gone{opacity:0;transform:translate(-50%,-12px)}
+  .toast button{border:0;background:none;color:inherit;font:inherit;font-size:18px;line-height:1.2;cursor:pointer;padding:0 2px}
+  .btn[disabled]{opacity:.65;cursor:progress}
   .scanbox{font-size:15px}
   .acts{display:flex;gap:6px;align-items:center;justify-content:flex-end}
   .wide{overflow-x:auto}
@@ -185,16 +251,11 @@ function layout(title, body, active, local, sync) {
   .facts b{color:var(--ink);font-variant-numeric:tabular-nums}
   .why{margin:14px 0 0;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
   .why.error{color:var(--danger)}
-  .why.offline{margin:0 0 14px;color:var(--out)}${BADGE_CSS}
+  .why.offline{margin:0 0 14px;color:var(--out)}${BADGE_CSS}${NAVBAR_CSS}
   .caphint{color:var(--out);font-size:12px;margin:12px 0 0}
-  /* A phone: the header stacks, forms go one box to a line, and a table too
-     wide for its panel scrolls inside it. */
+  /* A phone: forms go one box to a line, and a table too wide for its panel
+     scrolls inside it. (The navbar stacks by its own rules.) */
   @media (max-width:640px){
-    .bar{flex-wrap:wrap;gap:8px 16px;padding:10px 14px}
-    .brand small{display:none}
-    .bar form{margin-left:auto}
-    .bar form+form{margin-left:0}
-    nav{order:3;width:100%;margin-left:0}
     main{padding:20px 14px 48px}
     .panel{padding:14px}
     th,td{padding:8px 10px}
@@ -205,15 +266,7 @@ function layout(title, body, active, local, sync) {
 </style>
 </head>
 <body>
-<header><div class="bar">
-  <div class="brand">${LOGO}<small>${SYSTEM}</small></div>
-  <nav>${nav}</nav>
-  ${active.startsWith('/admin') && active !== '/admin/login' ? '<form method="post" action="/admin/logout"><button class="btn ghost" type="submit">Sign out</button></form>' : ''}
-  ${badge ? `<form method="post" action="/admin/sync">
-    <input type="hidden" name="back" value="${active}">
-    <button class="sync ${badge.state}" type="submit" title="Sync now">${icon(badge.state)}${esc(badge.label)}</button>
-  </form>` : ''}
-</div></header>
+${navbar({ links, active, actions })}
 <main>${body}</main>
 <script>
   // Returning through browser history must recheck the admin session.
@@ -268,6 +321,43 @@ function layout(title, body, active, local, sync) {
       }
     }
   } catch (e) { /* The form remains usable if browser storage is unavailable. */ }
+  // A save that worked: the page already says so, but a line of green at the
+  // top is easy to miss after a second's wait — so it is also shown as a
+  // notice that goes away by itself. The form is emptied, and the message
+  // taken out of the address so that reloading doesn't say it again.
+  var saved = document.querySelector('.flash.ok');
+  if (saved) {
+    if (draftForm) draftForm.reset();
+    var toast = document.createElement('div');
+    toast.className = 'toast gone'; toast.setAttribute('role', 'status');
+    var said = document.createElement('span');
+    said.textContent = '\u2713 ' + saved.textContent;
+    var close = document.createElement('button');
+    close.type = 'button'; close.setAttribute('aria-label', 'Dismiss'); close.textContent = '\u00d7';
+    var dismiss = function () {
+      toast.classList.add('gone');
+      setTimeout(function () { toast.remove(); }, 300);
+    };
+    close.onclick = dismiss;
+    toast.appendChild(said); toast.appendChild(close);
+    document.body.appendChild(toast);
+    setTimeout(function () { toast.classList.remove('gone'); }, 30);
+    setTimeout(dismiss, 8000);
+    try { history.replaceState(null, '', location.pathname); } catch (e) { /* the message just stays in the address */ }
+  }
+  // Saving waits on Google for a second or two. Say so, and don't take a
+  // second press for a second person.
+  Array.prototype.forEach.call(document.querySelectorAll('form.scanbox'), function (form) {
+    var button = form.querySelector('button[type=submit]');
+    if (!button) return;
+    var label = button.textContent;
+    form.addEventListener('submit', function () {
+      // After this event, or the browser would not send the form at all.
+      setTimeout(function () { button.disabled = true; button.textContent = 'Saving\u2026'; }, 0);
+    });
+    // Coming back through browser history shows the page as it was left.
+    window.addEventListener('pageshow', function () { button.disabled = false; button.textContent = label; });
+  });
   if (draftForm) {
     ['input', 'change', 'submit'].forEach(function (type) {
       draftForm.addEventListener(type, function () { draftDirty = true; saveDraft(); });
@@ -341,28 +431,73 @@ function syncPanel(sync) {
     </div>`;
 }
 
-function dashboardPage({ currentlyIn, sync, local }) {
-  const rows = currentlyIn.length
-    ? currentlyIn.map((u) => `
+// The parts of the dashboard that change while it is open: who is in, the
+// sheet panel, and the cloud in the navbar. The page is built from them, and
+// the server sends them again over /admin/events whenever something changes
+// (a tap, a sync), so an open dashboard keeps itself up to date.
+function dashboardLive({ currentlyIn, sync }) {
+  const badge = sync ? syncBadge(sync) : null;
+  return {
+    count: currentlyIn.length,
+    rows: currentlyIn.length
+      ? currentlyIn.map((u) => `
         <tr>
           <td>${esc(u.name)}</td>
           <td class="mono">${esc(u.student_id || '')}</td>
           <td>since ${fmtTime(u.since)}</td>
           <td><span class="pill in">in</span></td>
         </tr>`).join('')
-    : `<tr><td colspan="4" class="empty">Nobody is checked in right now.</td></tr>`;
+      : `<tr><td colspan="4" class="empty">Nobody is checked in right now.</td></tr>`,
+    panel: syncPanel(sync),
+    badge: badge ? { state: badge.state, html: icon(badge.state) + esc(badge.label) } : null,
+  };
+}
 
+function dashboardPage({ currentlyIn, sync, local }) {
+  const live = dashboardLive({ currentlyIn, sync });
   const body = `
     <h1>Dashboard</h1>
-    <p class="sub">Office attendance when this page was opened. <a href="/admin">Refresh attendance</a> to see new taps.</p>
+    <p class="sub">Who is in the office right now. This page updates by itself.</p>
+    <p class="flash err" id="live-lost" role="status" hidden></p>
     <div class="panel">
-      <h2>Currently in (${currentlyIn.length})</h2>
+      <h2>Currently in (<span id="in-count">${live.count}</span>)</h2>
       <table>
         <thead><tr><th>Name</th><th>Student ID</th><th>Checked in</th><th>Status</th></tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody id="in-rows">${live.rows}</tbody>
       </table>
     </div>
-    ${syncPanel(sync)}`;
+    <div id="sync-panel">${live.panel}</div>
+    <script>
+      (function () {
+        var lost = document.getElementById('live-lost');
+        if (!window.EventSource) {
+          lost.textContent = 'This browser can\u2019t update the page by itself. Reload it to see new taps.';
+          lost.hidden = false;
+          return;
+        }
+        var stream = new EventSource('/admin/events');
+        stream.addEventListener('dashboard', function (e) {
+          var now = JSON.parse(e.data);
+          document.getElementById('in-count').textContent = now.count;
+          document.getElementById('in-rows').innerHTML = now.rows;
+          document.getElementById('sync-panel').innerHTML = now.panel;
+          var badge = document.querySelector('[data-sync-badge]');
+          if (badge && now.badge) {
+            badge.className = 'sync ' + now.badge.state;
+            badge.innerHTML = now.badge.html;
+          }
+          lost.hidden = true;
+        });
+        // The browser reconnects by itself after a dropped connection. It gives
+        // up only when the answer isn't the stream at all: the session ended.
+        stream.onerror = function () {
+          lost.textContent = stream.readyState === 2
+            ? 'This page stopped updating \u2014 your session may have ended. Reload it.'
+            : 'Not updating \u2014 reconnecting\u2026';
+          lost.hidden = false;
+        };
+      })();
+    </script>`;
   return layout('Dashboard', body, '/admin', local, sync);
 }
 
@@ -385,8 +520,8 @@ function personFields(p) {
           ${choice('section', SECTIONS, p.section)}</div>
         <div><label for="status">Status</label>
           ${choice('status', STATUSES, p.status)}</div>
-        <div><label for="telegram">Telegram</label>
-          <input type="text" name="telegram" id="telegram" required autocomplete="off"
+        <div><label for="telegram">Telegram (optional)</label>
+          <input type="text" name="telegram" id="telegram" autocomplete="off"
                  placeholder="@handle" value="${esc(p.telegram)}"></div>`;
 }
 
@@ -681,15 +816,7 @@ function stationPage({ readerOnly = true } = {}) {
   html,body{height:100%}
   body{margin:0;font:18px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
        color:var(--ink);background:var(--bg);display:flex;flex-direction:column;cursor:default}
-  header{display:flex;align-items:center;gap:20px;padding:16px 28px;background:var(--panel);
-         border-bottom:1px solid var(--line)}
-  .brand{font-weight:700;font-size:20px}
-  .brand small{color:var(--muted);font-weight:500}
-  #now{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--muted);font-size:20px;white-space:nowrap}
-  header a,header button{font:inherit;font-size:16px;font-weight:600;border-radius:9px;
-         padding:9px 16px;border:1px solid var(--line);background:#fff;color:var(--ink);
-         text-decoration:none;cursor:pointer;white-space:nowrap}
-  header button{color:var(--danger);border-color:#f0c4bf}
+  #now{font-variant-numeric:tabular-nums;color:var(--muted)}
   .wrap{flex:1;display:grid;grid-template-columns:1fr 340px;gap:24px;padding:24px 28px;min-height:0}
   .main{display:flex;align-items:center;justify-content:center;border-radius:var(--radius);
         background:var(--panel);border:1px solid var(--line);text-align:center;padding:40px}
@@ -724,7 +851,7 @@ function stationPage({ readerOnly = true } = {}) {
         border-radius:50%;animation:spin .8s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   #sync{display:none;font-size:15px;padding:7px 14px;border:0}
-  .glyph svg{width:120px;height:120px;stroke-width:1.5;color:var(--muted)}${BADGE_CSS}
+  .glyph svg{width:120px;height:120px;stroke-width:1.5;color:var(--muted)}${BADGE_CSS}${NAVBAR_CSS}
   #shut{position:fixed;inset:0;background:rgba(18,24,31,.55);display:none;align-items:center;justify-content:center}
   #shut.open{display:flex}
   .dialog{background:#fff;border-radius:var(--radius);padding:30px;width:min(560px,92vw);max-height:90vh;overflow:auto}
@@ -739,14 +866,10 @@ function stationPage({ readerOnly = true } = {}) {
   @media (max-width:1100px){ .brand small{display:none} }
   @media (max-width:900px){
     .wrap{grid-template-columns:1fr;padding:16px}
-    header{flex-wrap:wrap;padding:12px 16px;gap:12px}
-    #now{order:3;width:100%;margin-left:0;font-size:16px}
-    header a{margin-left:auto}
+    #now{font-size:16px}
     .big{font-size:56px} .name{font-size:32px} .main.bad .big{font-size:44px}
   }
   @media (max-width:560px){
-    .brand{width:100%}
-    header a{margin-left:0}
     .main{padding:28px 16px}
   }
 </style>
@@ -754,14 +877,15 @@ function stationPage({ readerOnly = true } = {}) {
 <body>
 <div id="unfocused">${icon('click')}Click to resume</div>
 <div id="offline" role="status"><span class="spin"></span>Reconnecting…</div>
-<header>
-  <div class="brand">${LOGO}<small>${SYSTEM}</small></div>
-  <div id="now"></div>
-  <button type="button" id="sync" class="sync" title="Sync now"></button>
-  <a href="/register">Register</a>
-  <a href="/admin">Admin</a>
-  <button type="button" id="shut-open">Shut down</button>
-</header>
+${navbar({
+    wide: true,
+    middle: '<div id="now" class="mid"></div>',
+    links: [['/register', 'Register'], ['/admin', 'Admin']],
+    actions: [
+      '<button type="button" id="sync" class="sync" title="Sync now"></button>',
+      '<button type="button" id="shut-open" class="act danger">Shut down</button>',
+    ],
+  })}
 <div class="wrap">
   <div class="main idle" id="main" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="side">
@@ -1086,4 +1210,4 @@ function stationPage({ readerOnly = true } = {}) {
 </html>`;
 }
 
-module.exports = { loginPage, dashboardPage, registerPage, usersPage, hoursPage, stationPage, syncBadge };
+module.exports = { loginPage, dashboardPage, dashboardLive, registerPage, usersPage, hoursPage, stationPage, syncBadge };

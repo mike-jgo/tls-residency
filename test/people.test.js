@@ -33,12 +33,18 @@ test('every section and every status is accepted', () => {
   for (const status of STATUSES) assert.ok(readPerson(form({ status })).person, status);
 });
 
-test('name, ID number, section, status and Telegram are all required', () => {
-  for (const key of ['name', 'student_id', 'section', 'status', 'telegram']) {
+test('name, ID number, section and status are all required', () => {
+  for (const key of ['name', 'student_id', 'section', 'status']) {
     const { person, error } = readPerson(form({ [key]: '' }));
     assert.strictEqual(person, undefined, key);
     assert.ok(error, key);
   }
+});
+
+test('a Telegram handle can be left out, but not mistyped', () => {
+  assert.strictEqual(readPerson(form({ telegram: '' })).person.telegram, null);
+  assert.strictEqual(readPerson(form({ telegram: '  ' })).person.telegram, null);
+  assert.match(readPerson(form({ telegram: 'two words' })).error, /Telegram/);
 });
 
 // The dropdowns are only a convenience: a request can carry anything.

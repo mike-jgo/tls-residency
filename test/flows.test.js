@@ -127,7 +127,7 @@ test('idle return saves a draft and restores it after returning to the form', ()
     const context = {
       location, Object, JSON, URLSearchParams,
       window: { addEventListener() {} },
-      document: { querySelector: () => form, createElement: () => ({
+      document: { querySelector: (sel) => (sel === 'form.scanbox' ? form : null), querySelectorAll: () => [], createElement: () => ({
         setAttribute() {}, appendChild(child) { this.child = child; }, remove() { notes.length = 0; },
       }) },
       sessionStorage: {

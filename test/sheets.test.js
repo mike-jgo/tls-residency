@@ -199,3 +199,12 @@ test('the spreadsheet setting may be the ID or the whole address', () => {
   assert.strictEqual(spreadsheetIdFrom('https://docs.google.com/spreadsheets/d/1AbC_d-9/edit?gid=0#gid=0'), '1AbC_d-9');
   assert.strictEqual(spreadsheetIdFrom(undefined), '');
 });
+
+test('several ranges are read in one request, in the order asked for', async () => {
+  const google = fakeGoogle(() => reply(200, { valueRanges: [{ values: [[1, 'a']] }, {}] }));
+  const client = createSheetsClient({ spreadsheetId: 'abc', keyFile, fetch: google.fetch });
+  assert.deepStrictEqual(await client.readRanges(["'May 2026 Logs'!A2:F", "'June 2026 Logs'!A2:F"]), [[[1, 'a']], []]);
+  assert.match(google.calls[1].url, /\/values:batchGet\?ranges='May%202026%20Logs'!A2%3AF&ranges='June%202026%20Logs'!A2%3AF$/);
+  assert.deepStrictEqual(await client.readRanges([]), []);
+  assert.strictEqual(google.calls.length, 2, 'nothing to ask for, nothing asked');
+});

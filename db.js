@@ -27,8 +27,7 @@ db.exec(`
     telegram    TEXT,
     rfid        TEXT    NOT NULL UNIQUE,
     created_at  TEXT    NOT NULL,
-    active      INTEGER NOT NULL DEFAULT 1,
-    in_sheet    INTEGER NOT NULL DEFAULT 0
+    active      INTEGER NOT NULL DEFAULT 1
   );
 
   CREATE TABLE IF NOT EXISTS events (
@@ -72,18 +71,12 @@ if (!db.pragma('table_info(users)').some((c) => c.name === 'active')) {
 
 // The staffer directory's fields (lib/people.js) came later still. People
 // registered before them have none until someone edits them in. Those
-// databases also keep a `role` column, and later ones `year` and `course`,
-// which nothing reads any more.
+// databases also keep a `role` column, and later ones `year`, `course` and
+// `in_sheet`, which nothing reads any more.
 for (const column of ['section', 'status', 'telegram']) {
   if (!db.pragma('table_info(users)').some((c) => c.name === column)) {
     db.exec(`ALTER TABLE users ADD COLUMN ${column} TEXT`);
   }
-}
-
-// Whether the Staffers tab has ever listed them — see lib/roster.js. Not yet,
-// for everyone registered before the tab became the record.
-if (!db.pragma('table_info(users)').some((c) => c.name === 'in_sheet')) {
-  db.exec('ALTER TABLE users ADD COLUMN in_sheet INTEGER NOT NULL DEFAULT 0');
 }
 
 // ---- Prepared statements (compiled once, reused) -------------------------
@@ -111,6 +104,16 @@ const stmt = {
     FROM events e JOIN users u ON u.id = e.user_id
     WHERE e.id > ? ORDER BY e.id ASC LIMIT ?
   `),
+  // For the sync's pull of the taps the sheet holds — lib/sync.js.
+  allEvents:    db.prepare('SELECT * FROM events ORDER BY id ASC'),
+  lastEventId:  db.prepare('SELECT COALESCE(MAX(id), 0) FROM events').pluck(),
+  clearEvents:  db.prepare('DELETE FROM events'),
+  restartIds:   db.prepare("DELETE FROM sqlite_sequence WHERE name = 'events'"),
+  // An id of null takes the next one.
+  putEvent:     db.prepare(
+    `INSERT INTO events (id, user_id, type, ts, boot_id, request_id)
+     VALUES (@id, @user_id, @type, @ts, @boot_id, @request_id)`
+  ),
   firstEventTs: db.prepare('SELECT MIN(ts) FROM events').pluck(),
   lastEventTs:  db.prepare('SELECT MAX(ts) FROM events').pluck(),
   countAfter:   db.prepare('SELECT COUNT(*) FROM events WHERE id > ?').pluck(),
@@ -121,16 +124,15 @@ const stmt = {
   // For lib/roster.js's pull: the tab's version of a person.
   fromSheet:    db.prepare(
     `UPDATE users SET name = @name, student_id = @student_id, section = @section, status = @status,
-       telegram = @telegram, rfid = @rfid, active = @active, in_sheet = 1
+       telegram = @telegram, rfid = @rfid, active = @active
      WHERE id = @id`
   ),
   newFromSheet: db.prepare(
-    `INSERT INTO users (name, student_id, section, status, telegram, rfid, active, in_sheet, created_at)
-     VALUES (@name, @student_id, @section, @status, @telegram, @rfid, @active, 1, @created_at)`
+    `INSERT INTO users (name, student_id, section, status, telegram, rfid, active, created_at)
+     VALUES (@name, @student_id, @section, @status, @telegram, @rfid, @active, @created_at)`
   ),
   setCard:      db.prepare('UPDATE users SET rfid = ? WHERE id = ?'),
-  setInSheet:   db.prepare('UPDATE users SET in_sheet = 1 WHERE id = ?'),
-  forgetSheet:  db.prepare('UPDATE users SET in_sheet = 0'),
+  deleteUser:   db.prepare('DELETE FROM users WHERE id = ?'),
   setActive:    db.prepare('UPDATE users SET active = ? WHERE id = ?'),
   listUsers:    db.prepare('SELECT * FROM users ORDER BY name COLLATE NOCASE'),
 
@@ -177,7 +179,19 @@ const applyRoster = db.transaction((plan) => {
     });
   }
   for (const id of plan.deactivate) stmt.setActive.run(0, id);
-  for (const id of plan.seen) stmt.setInSheet.run(id);
+});
+
+// Make the taps exactly `events`, all of them or none, and drop the people in
+// `gone` — for lib/sync.js, when the sheet's taps replace this device's.
+const replaceEvents = db.transaction((events, gone = []) => {
+  stmt.clearEvents.run();
+  stmt.restartIds.run();
+  for (const e of events) {
+    stmt.putEvent.run({
+      id: e.id, user_id: e.user_id, type: e.type, ts: e.ts, boot_id: e.boot_id || null, request_id: e.request_id || null,
+    });
+  }
+  for (const id of gone) stmt.deleteUser.run(id);
 });
 
 // ---- Public helpers ------------------------------------------------------
@@ -203,8 +217,17 @@ module.exports = {
 
   // For the sheet sync — see lib/roster.js.
   applyRoster,
-  markInSheet: db.transaction((ids) => { for (const id of ids) stmt.setInSheet.run(id); }),
-  forgetSheet: () => stmt.forgetSheet.run(),
+  listEvents: () => stmt.allEvents.all(),
+  getLastEventId: () => stmt.lastEventId.get(),
+  replaceEvents,
+  // Someone the sheet's taps name but its Staffers tab doesn't: kept, so the
+  // taps have someone to belong to, deactivated and with a card nothing reads.
+  addFormerStaffer(name, studentId) {
+    return Number(stmt.newFromSheet.run({
+      ...EMPTY_PERSON, name, student_id: studentId, rfid: `none:${studentId || name}`, active: 0,
+      created_at: new Date().toISOString(),
+    }).lastInsertRowid);
+  },
 
   setUserActive: (id, active) => stmt.setActive.run(active ? 1 : 0, id),
 

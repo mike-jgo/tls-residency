@@ -118,7 +118,7 @@ the screen to go blank, and unplugs it.
 **Registering someone.** On the Pi, click **Register** on the tap screen. The
 page (`/register`) is not part of admin: it asks for no password, and it only
 opens on the office computer itself, where the reader is. Fill in their name, ID
-number, section, status and Telegram handle (the @ is added for you). The sections and statuses on offer are listed at the top of
+number, section, status and — if they have one — Telegram handle (the @ is added for you). The sections and statuses on offer are listed at the top of
 `lib/people.js`. Click the Card number box and have them tap their card — the
 reader types the number straight in. If they already tapped on the tap screen (it
 said *Not registered*), pick the number out of the **Unrecognized taps** list
@@ -325,15 +325,31 @@ not deleted: it is renamed to `residency.db.before-restore-<time>`, so restoring
 the wrong backup can be undone by restoring that file. Taps made after the backup
 was taken are not in it — they are only in the set-aside file.
 
-On a brand-new SD card: deploy as below, copy the backup onto the Pi, and run the
-same three commands.
+With a Google spreadsheet set, a restore also makes the **sheet** match the backup
+at the next sync — see *Google Sheets*. Without a restore it is the other way
+round: the server takes the sheet's people and taps when it starts.
+
+On a brand-new SD card: with a spreadsheet set, deploy as below and start the
+server — it fills itself from the sheet. Without one, copy the backup onto the Pi
+and run the same three commands.
 
 ## Google Sheets
 
-Optional. The Pi can publish residency to a Google spreadsheet, so hours can be
-read without the Pi being on. For taps and hours it is one-way: the database stays
-the record, the sheet is a copy, and nothing typed into those tabs comes back. The
-`Staffers` tab is the other way round — see below.
+Optional. With a spreadsheet set, **the spreadsheet is the record** — of who the
+staffers are (the `Staffers` tab) and of every tap (the log tabs). The database on
+the device is a copy of it, kept so that a tap can be answered with no internet.
+
+**When the server starts, it takes the sheet's people and taps over its own.**
+Whatever the device had that isn't in the sheet is dropped; the one exception is
+taps made with no internet that were still waiting to be uploaded, which are kept
+and go up after the sheet's. (The startup backup is taken first, so what the
+device had is still in `backups/`.) After that, taps are uploaded as they happen
+and the `Staffers` tab is read every few minutes.
+
+So any device pointed at the spreadsheet carries on from the same history — a
+replacement Pi, a new SD card, a laptop. **Run one device at a time**: a second one
+switched on at the same moment doesn't see the first one's taps until it next
+starts, and both would be writing the same rows.
 
 The spreadsheet gets:
 
@@ -349,8 +365,20 @@ The spreadsheet gets:
   person's hours for every month, their details, and their taps, newest first.
   A name matches on any part of it; an ID number has to be exact.
 
-Tabs are created as needed. Don't type in the hours, log or Totals tabs or re-sort
-them — the next sync writes over its own cells. Add your own tabs for anything else.
+Tabs are created as needed. The hours and Totals tabs are worked out from the
+taps and written over on every sync, so nothing typed into them lasts. Add your own
+tabs for anything else.
+
+**Correcting a tap.** The log tabs can be edited, and the edit is taken up **the
+next time the server starts** (not before — until then the device keeps writing
+its own taps to the rows it expects, so edit with the device switched off, or
+restart it straight after). Delete a mistaken tap's row, fix a time, or type a
+forgotten check-out on a new row: date as `2026-10-01`, time as `18:30:00`, the
+person's name and ID number, and `IN` or `OUT`. Leave *Tap #* empty on a row you
+add. At startup the server reads the tabs, puts the taps in time order, numbers
+them again and writes the tabs out tidy. A row it can't read — a date in another
+format, a direction that isn't IN or OUT — stops the sync with **Sync error** and
+the tab and row to fix; nothing is changed until it is fixed.
 
 The Pi styles each of its tabs once, when it first sees it — green header rows, and
 on the Search tab a box to type in. After that the look is yours: restyle a tab and
@@ -374,8 +402,11 @@ Pi are a copy of it. Edit it freely, and sort it if you like:
   someone; clear it to reactivate them.
 - A row is matched to a person by ID number, or failing that by card, so either
   one can be corrected. Don't change both at once — that reads as a new person.
-- Deleting a row deactivates the person on the Pi. Nothing in the sheet can
-  delete taps.
+- Deleting a row deactivates the person on the Pi, and their taps stay in the log
+  tabs and the hours. (A device starting up finds those taps and keeps a
+  deactivated person for them.)
+- The log tabs carry each person's name and ID number on every row; when either
+  changes, the Pi writes those rows again to match.
 - A row the Pi can't use — a section that isn't on the list, an ID number or card
   on two rows — is skipped, the person stays as they were, and the People page
   says which row and why.
@@ -383,9 +414,11 @@ Pi are a copy of it. Edit it freely, and sort it if you like:
   them and, on the Pi, a **Register** button that opens the register page with the
   form filled in, ready for a tap.
 - Another device pointed at the same spreadsheet gets everyone, cards included,
-  from this tab. Give each device **its own spreadsheet for hours**, though: the
-  month and Totals tabs are written from one database and two would overwrite
-  each other.
+  from this tab, and every tap from the log tabs.
+- A device never writes its own copy of a person over a row that has changed
+  since it last read the tab. An edit or deactivation on the People page is then
+  refused with "the sheet's details … are not the ones this device has"; it
+  syncs straight away, and the change can be made again.
 
 Anyone who can open the spreadsheet can read the card numbers, so share it with
 that in mind.
@@ -433,12 +466,20 @@ minute until it works.
    `sheet sync failed: …` with Google's reason if something is wrong — most often
    the sheet not being shared with the service account.
 
-The first sync uploads the whole history. Pointing `SHEETS_SPREADSHEET_ID` at a
-different spreadsheet does the same there.
+Pointing `SHEETS_SPREADSHEET_ID` at a different spreadsheet makes that one the
+record: at the next start the device takes on whatever it holds. **A new, empty
+spreadsheet therefore leaves the device with no people and no taps.**
 
-After **restoring a backup**, the next sync empties the month tabs and uploads the
-restored history from the top, so taps made after that backup don't linger in the
-sheet.
+**Restoring a backup is the one thing that goes the other way.** A restore says
+"this database is the record now": the next sync does not read the sheet first.
+It empties the month, log and Totals tabs and uploads the restored history from
+the top, and adds the people in the backup whom the `Staffers` tab doesn't list.
+That is also how to move a device's history into a new spreadsheet — set the new
+ID, then restore the latest backup:
+
+```bash
+npm run restore -- backups/residency-2026-10-01_183044.db
+```
 
 ## The clock
 

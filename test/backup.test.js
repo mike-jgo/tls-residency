@@ -199,8 +199,9 @@ test('backups made under the old name are still listed', () => {
   assert.deepStrictEqual(listBackups(dir), ['attendance-2026-10-01_183044.db', 'residency-2026-10-02_183044.db']);
 });
 
-// The sheet may hold taps made after the backup. Forgetting which sheet was
-// synced makes the next sync empty it and upload from the top (sync.test.js).
+// The sheet is the record, and a server starting up takes its word over the
+// database's. A restore marks the database as owed to the sheet instead, so
+// the next sync empties the sheet and uploads from the top (sync.test.js).
 test('a restore makes the next sheet sync start from the top', () => {
   const dbPath = path.join(tmp, 'i', 'residency.db');
   const dir = path.join(tmp, 'i', 'backups');
@@ -210,5 +211,8 @@ test('a restore makes the next sheet sync start from the top', () => {
     `console.log(await b.createBackup({source:s,dir:${JSON.stringify(dir)}}))`);
 
   restoreBackup({ backupPath: backup, dbPath });
-  assert.strictEqual(inServer(dbPath, "console.log(String(s.getMeta('sync_spreadsheet')))"), 'undefined');
+  assert.strictEqual(
+    inServer(dbPath, "console.log(['sync_full','sync_seed','sync_event_id'].map((k) => s.getMeta(k)).join())"),
+    '1,1,0',
+  );
 });

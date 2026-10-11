@@ -88,6 +88,11 @@ function backUp(when) {
 // ---- Google Sheets sync --------------------------------------------------
 // Off unless a spreadsheet is configured. Kicked at startup, when the clock is
 // set, and whenever a tap or the roster changes — see lib/sync.js.
+//
+// The spreadsheet is the record: the first sync replaces this device's people
+// and taps with the sheet's. So it waits for the startup backup, which is then
+// a copy of what this device had.
+let backedUp = false;
 const SHEETS_SPREADSHEET_ID = sheets.spreadsheetIdFrom(process.env.SHEETS_SPREADSHEET_ID);
 const sync = SHEETS_SPREADSHEET_ID
   ? createSync({
@@ -97,9 +102,9 @@ const sync = SHEETS_SPREADSHEET_ID
       spreadsheetId: SHEETS_SPREADSHEET_ID,
       keyFile: process.env.GOOGLE_SERVICE_ACCOUNT_KEY || path.join(__dirname, 'service-account.json'),
     }),
-    ready: () => clock !== null && clock.isReady(),
+    ready: () => backedUp && clock !== null && clock.isReady(),
     log: (message) => console.log(`  ${message}`),
-    onChange: () => showStatus(), // the tap screen says when it is offline
+    onChange: () => showStatus(), // the tap screen says when it is offline, and who the sheet says is in
   })
   : null;
 const kickSync = (rosterChanged) => { if (sync) sync.kick(rosterChanged); };
@@ -144,11 +149,20 @@ app.post('/admin/sync', async (req, res) => {
   res.redirect(ADMIN_PAGES.has(req.body.back) ? req.body.back : '/admin');
 });
 
-// Dashboard: who is currently in.
+// Dashboard: who is currently in. An open dashboard is kept up to date over
+// /admin/events — showStatus() sends it whatever the tap screen is sent.
+const dashboardNow = () => ({ currentlyIn: store.getCurrentlyIn(BOOT_ID), sync: syncStatus() });
 app.get('/admin', (req, res) => {
-  res.send(views.dashboardPage({
-    currentlyIn: store.getCurrentlyIn(BOOT_ID), sync: syncStatus(), local: isLocal(req),
-  }));
+  res.send(views.dashboardPage({ ...dashboardNow(), local: isLocal(req) }));
+});
+
+const dashboardClients = new Set();
+app.get('/admin/events', (req, res) => {
+  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+  res.flushHeaders();
+  dashboardClients.add(res);
+  sendEvent(res, 'dashboard', views.dashboardLive(dashboardNow()));
+  req.on('close', () => dashboardClients.delete(res));
 });
 
 // People / roster.
@@ -360,9 +374,14 @@ function stationStatus() {
 }
 
 function showStatus() {
-  if (!stationClients.size) return;
-  const status = stationStatus();
-  for (const res of stationClients) sendEvent(res, 'status', status);
+  if (stationClients.size) {
+    const status = stationStatus();
+    for (const res of stationClients) sendEvent(res, 'status', status);
+  }
+  if (dashboardClients.size) {
+    const live = views.dashboardLive(dashboardNow());
+    for (const res of dashboardClients) sendEvent(res, 'dashboard', live);
+  }
 }
 
 // The page's own POSTs. The custom header is a cheap CSRF guard: a form or
@@ -472,9 +491,8 @@ app.listen(PORT, () => {
     floor: () => Date.parse(store.getLastEventTs() || '') || 0,
   });
   console.log('');
-  backUp('startup');
   console.log(sync
     ? `  Sheet sync:  spreadsheet ${SHEETS_SPREADSHEET_ID}`
     : '  Sheet sync:  off (SHEETS_SPREADSHEET_ID is not set)');
-  kickSync();
+  backUp('startup').then(() => { backedUp = true; kickSync(); });
 });

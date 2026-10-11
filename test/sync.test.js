@@ -75,15 +75,25 @@ function fakeSheet() {
       }
       tabs.set(title, moved);
     },
+    async readRanges(ranges) { return Promise.all(ranges.map((range) => sheet.readRange(range))); },
     async listTabs() { return [...tabs.keys()]; },
-    async addTabs(titles) { for (const t of titles) tabs.set(t, new Map()); },
+    // Like Google, a tab made again is a different tab: it gets a new id.
+    made: new Map(),
+    async addTabs(titles) {
+      for (const t of titles) {
+        tabs.set(t, new Map());
+        sheet.made.set(t, (sheet.made.get(t) || 0) + 1);
+      }
+    },
+    idOf: (title) => (sheet.made.get(title) > 1 ? `${title}#${sheet.made.get(title)}` : title),
     views: new Map(), // title -> the filter views it has, by title
     frozen: new Map(),
     async describeTabs() {
-      return [...tabs.keys()].map((title) => ({ title, sheetId: title, views: (sheet.views.get(title) || []).map((v) => v.title) }));
+      return [...tabs.keys()].map((title) => ({ title, sheetId: sheet.idOf(title), views: (sheet.views.get(title) || []).map((v) => v.title) }));
     },
     async dressTabs(list) {
-      for (const { sheetId, frozen, views } of list) {
+      for (const { sheetId: id, frozen, views } of list) {
+        const sheetId = id.replace(/#\d+$/, '');
         sheet.frozen.set(sheetId, frozen);
         sheet.views.set(sheetId, [...(sheet.views.get(sheetId) || []), ...views]);
       }
@@ -151,7 +161,23 @@ function person(name) {
 const at = (y, m, d, h = 9, min = 0) => new Date(Date.UTC(y, m - 1, d, h - 8, min)).toISOString();
 const tapAt = (user, type, iso, boot = BOOT) => Number(store.insertEvent(user.id, type, iso, boot).lastInsertRowid);
 
+// What restoreBackup leaves (backup.test.js): the database is owed to the
+// sheet whole, people included.
+function restored() {
+  store.setMeta('sync_full', '1');
+  store.setMeta('sync_seed', '1');
+  store.setMeta('sync_event_id', '0');
+}
+
+// A new process. Most tests begin with the taps on this device and a
+// spreadsheet with nothing in it — which is what a restored backup is, the one
+// time the database is uploaded instead of giving way to the sheet. From then
+// on, each new process takes the sheet's taps over its own, as a real one does.
 function syncer(sheet, nowISO, extra = {}) {
+  if (!sheet.begun) {
+    sheet.begun = true;
+    restored();
+  }
   return createSync({ store, client: sheet, bootId: BOOT, now: () => Date.parse(nowISO), ...extra });
 }
 
@@ -293,7 +319,7 @@ test('someone who drops out of a month\'s table leaves no stale row behind', asy
   assert.strictEqual(sheet.cell('Totals', 'G' + row), 'yes');
 });
 
-test('pointing at a different spreadsheet uploads the whole history to it', async () => {
+test('a restored backup is uploaded whole, to whichever spreadsheet is set', async () => {
   const ivy = person('Ivy Dec');
   const ids = [tapAt(ivy, 'in', at(2026, 12, 1, 9)), tapAt(ivy, 'out', at(2026, 12, 1, 10))];
   const one = fakeSheet();
@@ -373,8 +399,8 @@ test('a tap that arrives during an upload goes up straight after it', async () =
 // ---- Review fixes --------------------------------------------------------
 
 // After a restore the sheet holds taps the database no longer has. The
-// restore clears the mark (see backup.test.js); the next sync must then leave
-// nothing behind that isn't in the database.
+// restore marks the database as owed to the sheet (see backup.test.js); the
+// next sync must then leave nothing behind that isn't in the database.
 test('starting from the top removes rows the database no longer has', async () => {
   const lea = person('Lea 27');
   const id = tapAt(lea, 'in', at(2027, 5, 3, 9));
@@ -388,7 +414,7 @@ test('starting from the top removes rows the database no longer has', async () =
   sheet.tabs.set('June 2027', new Map([['A1', 'Name'], ['A2', 'Ghost'], ['C2', 5]]));
   sheet.tabs.set('Notes', new Map([['A2', 'someone\'s own tab']]));
 
-  store.setMeta('sync_spreadsheet', ''); // what restoreBackup leaves
+  restored();
   await syncer(sheet, at(2027, 5, 3, 11)).syncOnce();
 
   assert.deepStrictEqual(sheet.column('May 2027 Logs', 'A'), [id]);
@@ -403,7 +429,7 @@ test('a failed start from the top is finished by the retry', async () => {
   const sync = syncer(sheet, at(2027, 5, 4, 10));
   await sync.syncOnce();
   sheet.tabs.get('May 2027 Logs').set('A9', 999);
-  store.setMeta('sync_spreadsheet', '');
+  restored();
 
   sheet.fail = 'before';
   await assert.rejects(sync.syncOnce());
@@ -454,7 +480,7 @@ test('starting from the top removes people the database no longer has from Total
   const below = sheet.column('Totals', 'A').length + 2; // first row past the table
   totals.set('A' + below, 'Obsolete Person').set('C' + below, 12).set('D' + below, 3);
 
-  store.setMeta('sync_spreadsheet', ''); // what restoreBackup leaves
+  restored();
   await syncer(sheet, at(2027, 10, 1, 10)).syncOnce();
 
   assert.ok(!sheet.column('Totals', 'A').includes('Obsolete Person'));
@@ -476,7 +502,7 @@ const setCells = (sheet, row, cells) => cells.forEach((v, i) => {
   if (v === '') sheet.tabs.get('Staffers').delete('ABCDEFG'[i] + row); else sheet.tabs.get('Staffers').set('ABCDEFG'[i] + row, v);
 });
 
-test('people already on this device are put in a new Staffers tab, once', async () => {
+test('the people in a restored backup are put in the Staffers tab, once', async () => {
   const uma = person('Uma Dir');
   store.updateUser(uma.id, details('Uma Dir', 'D-uma'));
   const sheet = fakeSheet();
@@ -514,6 +540,8 @@ test('an edit made in the sheet is taken up here, and reaches the hours tables',
   assert.strictEqual(now.rfid, vic.rfid);
   assert.strictEqual(sheet.hours('February 2028')['Victor Dir'], 2);
   assert.strictEqual(sheet.hours('February 2028')['Vic Dir'], undefined);
+  // And the rows of their taps, which another device would read them from.
+  assert.deepStrictEqual(sheet.column('February 2028 Logs', 'D'), ['Victor Dir', 'Victor Dir']);
 });
 
 test('a row deleted from the sheet deactivates the person and keeps their taps', async () => {
@@ -626,7 +654,38 @@ test('a save is refused when the sheet already has that ID number or card', asyn
   await assert.rejects(sync.saveStaffer(rowOf(thief), null, () => assert.fail('saved')), /card number already belongs to Cal Dir/);
 });
 
-test('a different spreadsheet is given everyone here, and its Staffers tab is never emptied', async () => {
+test('a save from a device that is behind the sheet is refused, and the device catches up', async () => {
+  const eli = person('Eli Dir');
+  store.updateUser(eli.id, details('Eli Dir', 'D-eli'));
+  const sheet = fakeSheet();
+  const sync = syncer(sheet, at(2028, 10, 1, 9));
+  await sync.syncOnce();
+
+  // Someone changes their status in the sheet — by hand, or from another device.
+  const row = staffRow(sheet, 'D-eli');
+  sheet.tabs.get('Staffers').set('D' + row, 'Regular');
+  const before = sheet.writes.length;
+
+  // Deactivating them here, before this device has read that, would write the
+  // whole row from this device's copy — Probie and all.
+  const own = store.getUser(eli.id);
+  await assert.rejects(
+    sync.saveStaffer(rowOf({ ...own, active: 0 }), own, () => assert.fail('saved')),
+    (e) => e.offline === false && /Eli Dir \(row \d+\) are not the ones this device has/.test(e.message),
+  );
+  assert.strictEqual(sheet.writes.length, before, 'nothing was written');
+  assert.strictEqual(sheet.cell('Staffers', 'D' + row), 'Regular');
+
+  // Caught up, the same change goes through on top of the sheet's.
+  await sync.run();
+  const now = store.getUser(eli.id);
+  assert.strictEqual(now.status, 'Regular');
+  await sync.saveStaffer(rowOf({ ...now, active: 0 }), now, () => store.setUserActive(eli.id, false));
+  assert.deepStrictEqual(staffCells(sheet, 'D-eli').slice(3, 6), ['Regular', '@D_eli', 'yes']);
+  sync.stop();
+});
+
+test('the Staffers tab is never emptied, and its word is taken when a device comes back to it', async () => {
   const dee = person('Dee Dir');
   store.updateUser(dee.id, details('Dee Dir', 'D-dee'));
   const one = fakeSheet();
@@ -746,4 +805,211 @@ test('each tab is styled once, and a new or re-made tab gets its turn', async ()
   assert.strictEqual(sheet.styled.filter((t) => t === 'July 2029').length, 1);
   assert.strictEqual(sheet.styled.filter((t) => t === 'Search').length, 2);
   assert.strictEqual(sheet.styled.filter((t) => t === 'Totals').length, 1);
+});
+
+// ---- The sheet is the record: what a device has when it starts -----------
+
+// A spreadsheet as another device left it. `sheet.begun` keeps syncer() from
+// treating this device as a restored backup.
+const put = (sheet, title, rows) => {
+  if (!sheet.tabs.has(title)) sheet.tabs.set(title, new Map());
+  rows.forEach((cells, i) => cells.forEach((v, j) => {
+    if (v !== '') sheet.tabs.get(title).set('ABCDEFG'[j] + (i + 1), v);
+  }));
+};
+const TAPS = ['Tap #', 'Date', 'Time', 'Name', 'Student ID', 'Direction'];
+const STAFF = ['Name', 'ID number', 'Section', 'Status', 'Telegram', 'Deactivated', 'Card number'];
+function leftBy(staffers, logs = {}) {
+  const sheet = fakeSheet();
+  sheet.begun = true;
+  put(sheet, 'Staffers', [STAFF, ...staffers]);
+  for (const [title, rows] of Object.entries(logs)) put(sheet, title, [TAPS, ...rows]);
+  return sheet;
+}
+const PIA = ['Pia Pull', 'P-pia', 'Web', 'Regular', '@pia', '', '990001'];
+const taps = () => store.listEvents().map((e) => [e.id, store.getUser(e.user_id).name, e.type, e.ts]);
+
+test('a device switched on takes the sheet\'s people and taps over its own', async () => {
+  const stray = person('Stray Local');
+  tapAt(stray, 'in', at(2030, 3, 1, 9));
+  const sheet = leftBy([PIA], {
+    'March 2030 Logs': [[1, '2030-03-04', '09:00:00', 'Pia Pull', 'P-pia', 'IN'], [2, '2030-03-04', '12:00:00', 'Pia Pull', 'P-pia', 'OUT']],
+  });
+  const logged = [];
+  const sync = syncer(sheet, at(2030, 3, 4, 13), { log: (m) => logged.push(m) });
+  await sync.syncOnce();
+
+  assert.deepStrictEqual(taps(), [
+    [1, 'Pia Pull', 'in', at(2030, 3, 4, 9)], [2, 'Pia Pull', 'out', at(2030, 3, 4, 12)],
+  ]);
+  assert.strictEqual(store.getUserByRfid('990001').section, 'Web');
+  assert.strictEqual(store.getUser(stray.id), undefined, 'nobody the sheet does not know is left');
+  assert.deepStrictEqual(store.listUsers().map((u) => u.name), ['Pia Pull']);
+  assert.ok(logged.some((m) => /now has the sheet's 2 taps/.test(m)));
+
+  // Nothing of the sheet's was emptied or moved, and the hours follow from it.
+  assert.deepStrictEqual(sheet.clears, []);
+  assert.deepStrictEqual(sheet.column('March 2030 Logs', 'A'), [1, 2]);
+  assert.strictEqual(sheet.hours('March 2030')['Pia Pull'], 3);
+  assert.deepStrictEqual(sheet.column('Staffers', 'A'), ['Pia Pull']);
+  assert.strictEqual(sync.status().pending, 0);
+});
+
+test('taps still waiting when a device starts are kept, after whatever the sheet has gained', async () => {
+  const sheet = leftBy([PIA], {
+    'April 2030 Logs': [[1, '2030-04-01', '09:00:00', 'Pia Pull', 'P-pia', 'IN'], [2, '2030-04-01', '12:00:00', 'Pia Pull', 'P-pia', 'OUT']],
+  });
+  await syncer(sheet, at(2030, 4, 1, 13)).syncOnce();
+  // Tapped with no internet, then switched off. It got the next number...
+  const pia = store.getUserByRfid('990001');
+  assert.strictEqual(tapAt(pia, 'in', at(2030, 4, 2, 9)), 3);
+  // ...which another device, switched on meanwhile, has used as well.
+  put(sheet, 'April 2030 Logs', [TAPS, [], [], [3, '2030-04-03', '09:00:00', 'Pia Pull', 'P-pia', 'IN'], [4, '2030-04-03', '10:00:00', 'Pia Pull', 'P-pia', 'OUT']]);
+
+  const sync = syncer(sheet, at(2030, 4, 4, 9));
+  assert.strictEqual(sync.status().pending, 1);
+  await sync.syncOnce();
+  assert.deepStrictEqual(sheet.column('April 2030 Logs', 'A'), [1, 2, 3, 4, 5]);
+  assert.deepStrictEqual(sheet.column('April 2030 Logs', 'B'), ['2030-04-01', '2030-04-01', '2030-04-03', '2030-04-03', '2030-04-02']);
+  assert.deepStrictEqual(taps().map((t) => t[0]), [1, 2, 3, 4, 5]);
+  assert.strictEqual(sync.status().pending, 0);
+  assert.deepStrictEqual(sheet.clears, []);
+});
+
+test('a server restarted mid-day still knows who is in', async () => {
+  const sheet = leftBy([PIA]);
+  const morning = syncer(sheet, at(2030, 5, 6, 8));
+  await morning.syncOnce();
+  const pia = store.getUserByRfid('990001');
+  tapAt(pia, 'in', '2030-05-06T01:00:00.417Z');
+  await morning.syncOnce();
+
+  await syncer(sheet, at(2030, 5, 6, 10)).syncOnce(); // same boot, new process
+  assert.deepStrictEqual(store.getCurrentlyIn(BOOT).map((u) => u.name), ['Pia Pull']);
+  assert.strictEqual(store.listEvents()[0].ts, '2030-05-06T01:00:00.417Z', 'its own tap, to the millisecond');
+
+  await syncer(sheet, at(2030, 5, 7, 8), { bootId: 'boot-tomorrow' }).syncOnce();
+  assert.deepStrictEqual(store.getCurrentlyIn('boot-tomorrow'), [], 'switched off overnight: nobody is');
+});
+
+test('Logs tabs edited by hand are taken as they are, then written out afresh', async () => {
+  const sheet = leftBy([PIA], {
+    'June 2030 Logs': [
+      [1, '2030-06-03', '09:00:00', 'Pia Pull', 'P-pia', 'IN'],
+      [],                                                         // a mistaken tap, deleted
+      [3, '2030-06-04', '09:00:00', 'Pia Pull', 'P-pia', 'IN'],
+      ['', '2030-06-03', '11:30', 'Pia Pull', 'P-pia', 'out'],    // the check-out she forgot, typed in
+      [5, '2030-06-04', '10:00:00', 'Pia Pull', 'P-pia', 'OUT'],
+    ],
+  });
+  const sync = syncer(sheet, at(2030, 6, 5, 9));
+  await sync.syncOnce();
+
+  assert.deepStrictEqual(sheet.column('June 2030 Logs', 'A'), [1, 2, 3, 4]);
+  assert.deepStrictEqual(sheet.column('June 2030 Logs', 'C'), ['09:00:00', '11:30:00', '09:00:00', '10:00:00']);
+  assert.deepStrictEqual(sheet.column('June 2030 Logs', 'F'), ['IN', 'OUT', 'IN', 'OUT']);
+  assert.strictEqual(sheet.hours('June 2030')['Pia Pull'], 3.5);
+  assert.deepStrictEqual(taps().map((t) => t[0]), [1, 2, 3, 4]);
+  assert.strictEqual(sync.status().pending, 0);
+
+  // Tidy now: the next start reads it and rewrites nothing.
+  sheet.clears.length = 0;
+  await syncer(sheet, at(2030, 6, 5, 10)).syncOnce();
+  assert.deepStrictEqual(sheet.clears, []);
+});
+
+test('a tap in the sheet that cannot be read stops the sync and changes nothing', async () => {
+  const sheet = leftBy([PIA], { 'July 2030 Logs': [[1, '2030-07-01', '09:00:00', 'Pia Pull', 'P-pia', 'IN']] });
+  await syncer(sheet, at(2030, 7, 1, 10)).syncOnce();
+  const before = JSON.stringify(store.listEvents());
+
+  put(sheet, 'July 2030 Logs', [TAPS, [], [2, 'July 1', '12:00:00', 'Pia Pull', 'P-pia', 'OUT']]);
+  const sync = syncer(sheet, at(2030, 7, 2, 9), { retryMs: 60000 });
+  await sync.run();
+  sync.stop();
+  assert.strictEqual(sync.status().state, 'error');
+  assert.match(sync.status().error.message, /July 2030 Logs, row 3: "July 1 12:00:00" is not a date and time/);
+  assert.strictEqual(JSON.stringify(store.listEvents()), before);
+  assert.strictEqual(sheet.cell('July 2030 Logs', 'B3'), 'July 1', 'nor the sheet');
+
+  sheet.tabs.get('July 2030 Logs').set('B3', '2030-07-01');
+  await sync.syncOnce();
+  assert.strictEqual(store.listEvents().length, 2);
+});
+
+test('taps of someone the Staffers tab does not list are kept, under a deactivated person', async () => {
+  const sheet = leftBy([PIA], {
+    'August 2030 Logs': [[1, '2030-08-01', '09:00:00', 'Gone Staffer', 'P-gone', 'IN'], [2, '2030-08-01', '11:00:00', 'Gone Staffer', 'P-gone', 'OUT']],
+  });
+  await syncer(sheet, at(2030, 8, 1, 12)).syncOnce();
+  const gone = store.listUsers().find((u) => u.student_id === 'P-gone');
+  assert.deepStrictEqual([gone.name, gone.active], ['Gone Staffer', 0]);
+  assert.strictEqual(sheet.hours('Totals')['Gone Staffer'], 2);
+  assert.ok(!sheet.column('Staffers', 'B').includes('P-gone'), 'and not put in the Staffers tab');
+
+  await syncer(sheet, at(2030, 8, 2, 9)).syncOnce();
+  assert.strictEqual(store.listUsers().filter((u) => u.student_id === 'P-gone').length, 1, 'the same person each start');
+});
+
+test('an ID number corrected in the Staffers tab while switched off keeps the taps with their person', async () => {
+  const sheet = leftBy([PIA], { 'September 2030 Logs': [[1, '2030-09-02', '09:00:00', 'Pia Pull', 'P-pia', 'IN']] });
+  await syncer(sheet, at(2030, 9, 2, 10)).syncOnce();
+  const pia = store.getUserByRfid('990001');
+
+  sheet.tabs.get('Staffers').set('A2', 'Pia Pulled').set('B2', 'P-pia-2');
+  await syncer(sheet, at(2030, 9, 3, 9)).syncOnce();
+  assert.deepStrictEqual(store.listUsers().map((u) => [u.id, u.name, u.student_id]), [[pia.id, 'Pia Pulled', 'P-pia-2']]);
+  assert.strictEqual(store.getEventsForUser(pia.id).length, 1);
+  assert.deepStrictEqual(sheet.column('September 2030 Logs', 'E'), ['P-pia-2'], 'the tap\'s row follows');
+});
+
+test('a spreadsheet with nothing in it leaves a device with nothing', async () => {
+  const eve = person('Eve Empty');
+  tapAt(eve, 'in', at(2030, 10, 1, 9));
+  const sheet = fakeSheet();
+  sheet.begun = true;
+  const sync = syncer(sheet, at(2030, 10, 1, 10));
+  await sync.syncOnce();
+  assert.deepStrictEqual(store.listEvents(), []);
+  assert.deepStrictEqual(store.listUsers(), []);
+  assert.deepStrictEqual(sheet.column('Staffers', 'A'), []);
+  assert.deepStrictEqual([sync.status().pending, sync.status().state], [0, 'synced']);
+});
+
+test('a tap made before a new spreadsheet could be reached is still owed to it', async () => {
+  store.createUser(details('Pia Pull', 'P-pia'), '990001');
+  const pia = store.getUserByRfid('990001');
+  tapAt(pia, 'in', at(2030, 11, 1, 9)); // from whatever this device synced with before
+  const sheet = leftBy([PIA]);
+  const sync = syncer(sheet, at(2030, 11, 4, 9));
+
+  const reach = sheet.readRange;
+  sheet.readRange = async () => { throw Object.assign(new Error('Could not reach Google (ENOTFOUND).'), { offline: true }); };
+  await assert.rejects(sync.syncOnce());
+  const waiting = tapAt(pia, 'in', at(2030, 11, 4, 9));
+  assert.strictEqual(sync.status().pending, 1);
+
+  sheet.readRange = reach;
+  await sync.syncOnce();
+  assert.deepStrictEqual(taps(), [[waiting, 'Pia Pull', 'in', at(2030, 11, 4, 9)]]);
+  assert.deepStrictEqual(sheet.column('November 2030 Logs', 'A'), [waiting]);
+  assert.strictEqual(sync.status().pending, 0);
+});
+
+// Deleted by hand while the device was off. The startup sync makes it again
+// before it reads it, and that must not pass for the tab that was styled.
+test('a Staffers tab deleted and made again is styled and given its dropdowns again', async () => {
+  const sheet = leftBy([PIA]);
+  await syncer(sheet, at(2031, 1, 6, 9)).syncOnce();
+  const count = () => [sheet.styled.filter((t) => t === 'Staffers').length, sheet.shaped.length];
+  assert.deepStrictEqual(count(), [1, 1]);
+
+  sheet.made.set('Staffers', 1); // the one being deleted was the first
+  sheet.tabs.delete('Staffers');
+  await syncer(sheet, at(2031, 1, 7, 9)).syncOnce();
+  assert.deepStrictEqual(count(), [2, 2]);
+  assert.strictEqual(sheet.cell('Staffers', 'G1'), 'Card number');
+
+  await syncer(sheet, at(2031, 1, 8, 9)).syncOnce();
+  assert.deepStrictEqual(count(), [2, 2], 'once');
 });

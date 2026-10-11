@@ -123,3 +123,12 @@ test('only the sync\'s own tabs match the month-tab pattern', () => {
   assert.ok(!dates.MONTH_TAB_RE.test('Totals'));
   assert.ok(!dates.MONTH_TAB_RE.test('October 2026 notes'));
 });
+
+test('a date and time read off the sheet is the instant the local clock showed it', () => {
+  assert.strictEqual(dates.instantOf('2026-10-01', '18:30:44'), '2026-10-01T10:30:44.000Z');
+  assert.strictEqual(dates.instantOf('2026-10-01', '0:30'), '2026-09-30T16:30:00.000Z');
+  assert.strictEqual(dates.localStamp(dates.instantOf('2026-10-01', '18:30:44')), '2026-10-01 18:30:44');
+  for (const [date, time] of [['2026-02-30', '09:00:00'], ['10/1/2026', '09:00:00'], ['2026-10-01', '25:00'], ['2026-10-01', '']]) {
+    assert.strictEqual(dates.instantOf(date, time), null, `${date} ${time}`);
+  }
+});

@@ -8,17 +8,17 @@ const ANA = ['Ana Cruz', '111', 'Sports', 'Probie', '@ana', '', '9001'];
 const BEN = ['Ben Dy', '222', 'Web', 'Regular', '@ben', '', '9002'];
 
 let ids = 0;
-// A person on this device, from their row. `inSheet`: the tab has listed them.
-function user(row, inSheet = true) {
+// A person on this device, from their row.
+function user(row) {
   return {
     id: ++ids, name: row[0], student_id: row[1] || null, section: row[2] || null, status: row[3] || null,
     telegram: row[4] || null, active: row[5] === 'yes' ? 0 : 1,
-    rfid: row[6], in_sheet: inSheet ? 1 : 0,
+    rfid: row[6],
   };
 }
 const edit = (row, changes) => row.map((cell, i) => (i in changes ? changes[i] : cell));
 const NOTHING = {
-  create: [], update: [], deactivate: [], seen: [], writes: [], seeded: [], warnings: [], unlinked: [],
+  create: [], update: [], deactivate: [], unlisted: [], writes: [], warnings: [], unlinked: [],
 };
 
 // ---- pull: this device follows the tab ----------------------------------
@@ -73,28 +73,29 @@ test('a row deleted from the tab deactivates the person, and only that', () => {
   const ana = user(ANA);
   const plan = pull([ana, user(BEN)], [HEADER, BEN]);
   assert.deepStrictEqual(plan.deactivate, [ana.id]);
+  assert.deepStrictEqual(plan.unlisted, [ana.id]);
   assert.deepStrictEqual(plan.writes, [], 'the row is not put back');
-  assert.deepStrictEqual(pull([user(edit(ANA, { 5: 'yes' }))], [HEADER]).deactivate, [], 'already deactivated');
+  const off = user(edit(ANA, { 5: 'yes' }));
+  const again = pull([off], [HEADER]);
+  assert.deepStrictEqual(again.deactivate, [], 'already deactivated');
+  assert.deepStrictEqual(again.unlisted, [off.id], 'but still someone the tab does not list');
 });
 
-test('people the tab has never listed are added to it, below everything', () => {
+test('from a restored backup, people the tab does not list are added to it, below everything', () => {
   const old = ['Old Timer', '333', '', '', '', '', '9003']; // from before the directory fields
-  const [ana, timer] = [user(ANA, false), user(old, false)];
-  const plan = pull([ana, timer, user(BEN)], [[], BEN, [], ['stray note']]);
+  const [ana, timer] = [user(ANA), user(old)];
+  const plan = pull([ana, timer, user(BEN)], [[], BEN, [], ['stray note']], { seed: true });
   assert.deepStrictEqual(plan.writes, [
     { range: "'Staffers'!A1:G1", values: [HEADER] },
     { range: "'Staffers'!A5:G5", values: [ANA] },
     { range: "'Staffers'!A6:G6", values: [old] },
   ]);
-  assert.deepStrictEqual(plan.seeded, [ana.id, timer.id]);
   assert.deepStrictEqual(plan.deactivate, []);
+  assert.deepStrictEqual(plan.unlisted, []);
 });
 
 test('someone added that way is recognised next time, not added twice', () => {
-  const ana = user(ANA, false);
-  const plan = pull([ana], [HEADER, ANA]);
-  assert.deepStrictEqual(plan.seen, [ana.id]);
-  assert.deepStrictEqual(plan.writes, []);
+  assert.deepStrictEqual(pull([user(ANA)], [HEADER, ANA], { seed: true }).writes, []);
 });
 
 test('a bad row is skipped with a warning, and its person stays as they are', () => {
@@ -184,6 +185,22 @@ test('an edit goes to the person\'s own row, found by ID number or by card', () 
   ]);
   const noId = user(edit(ANA, { 1: '' }));
   assert.deepStrictEqual(place([HEADER, BEN, edit(ANA, { 1: '' })], ANA, noId).writes[0].range, "'Staffers'!A3:G3");
+});
+
+test('an edit from a copy that is behind the tab is refused, not written over it', () => {
+  // The tab says Regular now — typed there, or saved from another device.
+  const newer = edit(ANA, { 3: 'Regular' });
+  const spot = place([HEADER, BEN, newer], edit(ANA, { 5: 'yes' }), user(ANA));
+  assert.strictEqual(spot.stale, true);
+  assert.strictEqual(spot.writes, undefined);
+  assert.match(spot.error, /Ana Cruz \(row 3\) are not the ones this device has/);
+  // A corrected card or ID number counts too: the row is still found by the other.
+  assert.strictEqual(place([HEADER, edit(ANA, { 6: '9009' })], ANA, user(ANA)).stale, true);
+  assert.strictEqual(place([HEADER, edit(ANA, { 1: '119' })], ANA, user(ANA)).stale, true);
+  // A row that has only lost its card number gets it back.
+  assert.deepStrictEqual(place([HEADER, edit(ANA, { 6: '' })], ANA, user(ANA)).writes, [
+    { range: "'Staffers'!A2:G2", values: [ANA] },
+  ]);
 });
 
 test('reactivating someone whose row was deleted puts the row back', () => {
