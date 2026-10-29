@@ -369,7 +369,7 @@ function stationStatus() {
     // Shown as a small cloud in the header. Offline, taps are still recorded
     // here and uploaded later.
     sync: sync ? views.syncBadge(sync.status()) : null,
-    currentlyIn: store.getCurrentlyIn(BOOT_ID).map((u) => ({ name: u.name, since: u.since })),
+    currentlyIn: store.getCurrentlyIn(BOOT_ID).map((u) => ({ name: u.name, status: u.status, since: u.since })),
   };
 }
 

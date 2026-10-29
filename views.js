@@ -837,6 +837,12 @@ function stationPage({ readerOnly = true } = {}) {
                border-bottom:1px solid var(--line)}
   ul.people li:last-child{border-bottom:0}
   ul.people .since{color:var(--muted);font-variant-numeric:tabular-nums}
+  ul.people .who{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0}
+  ul.people .status{flex:none;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;
+                    letter-spacing:.03em;line-height:18px;background:#eef2f7;color:var(--muted)}
+  ul.people .status.s-regular{background:#e6f0fb;color:#1f5a96}
+  ul.people .status.s-eb,ul.people .status.s-eal{background:#e4f2e8;color:#1d6b3a}
+  ul.people .since{flex:none}
   .empty{color:var(--muted)}
   /* Taps can't be read: nothing else on the screen matters until it's clicked. */
   #unfocused{position:fixed;inset:0;z-index:5;display:none;flex-direction:column;align-items:center;
@@ -1002,7 +1008,10 @@ ${navbar({
     ul.textContent = '';
     status.currentlyIn.forEach(function (p) {
       var li = el('li');
-      li.appendChild(el('span', null, p.name));
+      var who = el('span', 'who');
+      who.appendChild(el('span', 'name', p.name));
+      if (p.status) who.appendChild(el('span', 'status s-' + String(p.status).toLowerCase(), p.status));
+      li.appendChild(who);
       li.appendChild(el('span', 'since', 'since ' + time(p.since)));
       ul.appendChild(li);
     });
