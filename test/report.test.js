@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { hoursCsv, leaderboards } = require('../lib/report');
+const { buildReport, hoursCsv, leaderboards } = require('../lib/report');
 const { SECTIONS } = require('../lib/people');
 
 const row = (changes) => ({
@@ -57,4 +57,13 @@ test('the top ten staffers are active people with hours, most first', () => {
   assert.strictEqual(staffers.length, 10);
   assert.deepStrictEqual(staffers[0], { name: 'P11', section: 'Web', hours: 11 });
   assert.ok(!staffers.some((p) => p.name === 'Gone' || p.hours === 0));
+});
+
+test('dummy staffers are left out of the report, so out of every total', () => {
+  const users = [
+    { id: 1, name: 'Ana Cruz', status: 'Regular', section: 'Web', active: 1 },
+    { id: 2, name: 'Bobet', status: 'Dummy', section: 'Sports', active: 1 },
+  ];
+  const store = { listUsers: () => users, getEventsForUser: () => [] };
+  assert.deepStrictEqual(buildReport(store, 'boot', null, null).report.map((r) => r.name), ['Ana Cruz']);
 });
