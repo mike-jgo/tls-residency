@@ -256,9 +256,9 @@ function layout(title, body, active, local, sync) {
   .why.offline{margin:0 0 14px;color:var(--out)}${BADGE_CSS}${NAVBAR_CSS}
   .bg-preview{position:relative;aspect-ratio:16/9;max-height:340px;width:100%;border-radius:8px;overflow:hidden;
               background:#f5f7fa;border:1px solid var(--line);isolation:isolate}
-  .bg-layer{position:absolute;inset:0;z-index:-1;background:center/cover no-repeat;opacity:var(--bg-opacity)}
+  .bg-layer{position:absolute;inset:0;z-index:-1;background:center/cover no-repeat}
   .bg-mock{position:absolute;inset:8% 5%;display:grid;grid-template-columns:1fr 30%;gap:4%}
-  .bg-card{background:#fff;border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;
+  .bg-card{background:color-mix(in srgb,#fff var(--card),transparent);border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;
            justify-content:center;font-weight:700;color:var(--muted);font-size:14px;text-align:center;padding:6px}
   .bg-card.side{align-items:flex-start;padding-top:12px;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
   .bg-none{position:absolute;left:0;right:0;bottom:6px;margin:0;text-align:center;color:var(--muted);font-size:13px}
@@ -821,13 +821,13 @@ const backgroundUrl = (image) => (image ? `/background?v=${encodeURIComponent(im
 function appearancePage({ image, opacity, flash, error, local, sync }) {
   const body = `
     <h1>Appearances</h1>
-    <p class="sub">A picture behind the tap screen. The panels stay solid white over it, so names and times stay readable.</p>
+    <p class="sub">A picture behind the tap screen. The panels sit over it; set how see-through they are below. Their text always stays solid.</p>
     ${flash ? `<p class="flash ok" role="status">${esc(flash)}</p>` : ''}
     ${error ? `<p class="flash err" role="alert">${esc(error)}</p>` : ''}
     <p class="flash err" id="bg-error" role="alert" hidden></p>
     <div class="panel">
       <h2>Preview</h2>
-      <div class="bg-preview" id="bg-preview" style="--bg-opacity:${opacity / 100}">
+      <div class="bg-preview" id="bg-preview" style="--card:${opacity}%">
         <div class="bg-layer" id="bg-layer"${image ? ` style="background-image:url('${backgroundUrl(image)}')"` : ''}></div>
         <div class="bg-mock"><div class="bg-card">Tap your ID</div><div class="bg-card side">In the office</div></div>
         ${image ? '' : '<p class="bg-none" id="bg-none">No picture yet</p>'}
@@ -848,10 +848,10 @@ function appearancePage({ image, opacity, flash, error, local, sync }) {
       </div>
     </div>
     <div class="panel">
-      <h2>Opacity</h2>
+      <h2>Panel opacity</h2>
       <form method="post" action="/admin/appearances" class="row bg-row">
         <div class="bg-slider">
-          <label for="bg-opacity">How strongly the picture shows: <b id="bg-value">${opacity}%</b></label>
+          <label for="bg-opacity">How solid the panels are (100% hides the picture behind them): <b id="bg-value">${opacity}%</b></label>
           <input id="bg-opacity" name="opacity" type="range" min="0" max="100" step="5" value="${opacity}">
         </div>
         <button class="btn" type="submit">Save opacity</button>
@@ -864,7 +864,7 @@ function appearancePage({ image, opacity, flash, error, local, sync }) {
         var value = document.getElementById('bg-value');
         slider.addEventListener('input', function () {
           value.textContent = slider.value + '%';
-          preview.style.setProperty('--bg-opacity', slider.value / 100);
+          preview.style.setProperty('--card', slider.value + '%');
         });
 
         var file = document.getElementById('bg-file');
@@ -912,7 +912,7 @@ function appearancePage({ image, opacity, flash, error, local, sync }) {
 }
 
 function stationPage({ readerOnly = true, background = null } = {}) {
-  const bg = background || { image: null, opacity: 0 };
+  const bg = background || { image: null, opacity: 100 };
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -932,18 +932,22 @@ function stationPage({ readerOnly = true, background = null } = {}) {
        color:var(--ink);background:var(--bg);display:flex;flex-direction:column;cursor:default}
   #now{font-variant-numeric:tabular-nums;color:var(--muted)}
   .wrap{flex:1;display:grid;grid-template-columns:1fr 340px;gap:24px;padding:24px 28px;min-height:0}
+  /* --card is the panels' opacity, set under Admin > Appearances. Only their
+     backgrounds fade; the text on them stays solid. */
   .main{display:flex;align-items:center;justify-content:center;border-radius:var(--radius);
-        background:var(--panel);border:1px solid var(--line);text-align:center;padding:40px}
-  .main.in{background:var(--in-bg);border-color:#bfe5cf;color:var(--in)}
-  .main.out{background:var(--out-bg);border-color:#efdcae;color:var(--out)}
-  .main.bad{background:var(--danger-bg);border-color:#f3c5bf;color:var(--danger)}
+        background:color-mix(in srgb,var(--panel) var(--card,100%),transparent);
+        border:1px solid var(--line);text-align:center;padding:40px}
+  .main.in{background:color-mix(in srgb,var(--in-bg) var(--card,100%),transparent);border-color:#bfe5cf;color:var(--in)}
+  .main.out{background:color-mix(in srgb,var(--out-bg) var(--card,100%),transparent);border-color:#efdcae;color:var(--out)}
+  .main.bad{background:color-mix(in srgb,var(--danger-bg) var(--card,100%),transparent);border-color:#f3c5bf;color:var(--danger)}
   .big{font-size:88px;font-weight:800;letter-spacing:.02em;line-height:1}
-  .name{font-size:44px;font-weight:700;margin-top:18px;color:var(--ink)}
+  .main .name{font-size:44px;font-weight:700;margin-top:18px;color:var(--ink)}
   .detail{font-size:22px;margin-top:14px;color:var(--ink);opacity:.8}
   .extra{font-size:18px;margin-top:18px;color:var(--out)}
   .idle .big{font-size:56px;color:var(--ink)}
   .main.bad .big{font-size:64px}
-  .side{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  .side{background:color-mix(in srgb,var(--panel) var(--card,100%),transparent);
+        border:1px solid var(--line);border-radius:var(--radius);
         padding:20px;overflow:auto}
   .side h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 12px}
   ul.people{list-style:none;margin:0;padding:0}
@@ -989,15 +993,15 @@ function stationPage({ readerOnly = true, background = null } = {}) {
   @media (max-width:900px){
     .wrap{grid-template-columns:1fr;padding:16px}
     #now{font-size:16px}
-    .big{font-size:56px} .name{font-size:32px} .main.bad .big{font-size:44px}
+    .big{font-size:56px} .main .name{font-size:32px} .main.bad .big{font-size:44px}
   }
   @media (max-width:560px){
     .main{padding:28px 16px}
   }
 </style>
 </head>
-<body>
-<div id="bg" aria-hidden="true" style="opacity:${bg.opacity / 100}${bg.image ? `;background-image:url('${backgroundUrl(bg.image)}')` : ''}"></div>
+<body style="--card:${bg.opacity}%">
+<div id="bg" aria-hidden="true"${bg.image ? ` style="background-image:url('${backgroundUrl(bg.image)}')"` : ''}></div>
 <div id="unfocused">${icon('click')}Click to resume</div>
 <div id="offline" role="status"><span class="spin"></span>Reconnecting…</div>
 ${navbar({
@@ -1324,7 +1328,7 @@ ${navbar({
   // A new background from the admin site, applied in place.
   es.addEventListener('appearance', function (e) {
     var a = JSON.parse(e.data), bg = document.getElementById('bg');
-    bg.style.opacity = a.opacity / 100;
+    document.body.style.setProperty('--card', a.opacity + '%');
     bg.style.backgroundImage = a.image ? 'url(/background?v=' + encodeURIComponent(a.image.version) + ')' : 'none';
   });
   es.addEventListener('status', function (e) {

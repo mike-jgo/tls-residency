@@ -283,9 +283,9 @@ nobody on the network can switch it off.
 ## Tap screen background
 
 **Admin → Appearances** puts a picture behind the tap screen: upload a PNG, JPEG,
-WebP or GIF (up to 8 MB), and set how strongly it shows with the opacity slider.
-An open tap screen picks up a change straight away, without reloading. The panels
-stay solid white, so names and times stay readable over any picture.
+WebP or GIF (up to 8 MB), and set how see-through the panels over it are with the
+opacity slider (100% is solid). Only the panels' backgrounds fade; their text stays
+solid. An open tap screen picks up a change straight away, without reloading.
 
 The picture is kept as `background.img` beside `residency.db` (not inside it, so
 backups stay small); the opacity is kept in the database.

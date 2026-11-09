@@ -90,11 +90,12 @@ test('a missing file reads as no picture', () => {
   assert.equal(appearance.settings().image, null);
 });
 
-test('the tap screen shows the picture at its opacity', () => {
+test('the tap screen shows the picture behind panels at their opacity', () => {
   const html = views.stationPage({ background: { image: { type: 'image/png', version: '123' }, opacity: 40 } });
-  assert.match(html, /<div id="bg"[^>]*opacity:0\.4;background-image:url\('\/background\?v=123'\)/);
+  assert.match(html, /<body style="--card:40%">/);
+  assert.match(html, /<div id="bg"[^>]*style="background-image:url\('\/background\?v=123'\)"/);
   const plain = views.stationPage();
-  assert.match(plain, /<div id="bg"[^>]*style="opacity:0"/);
+  assert.match(plain, /<body style="--card:100%">/);
   assert.doesNotMatch(plain, /background-image:url\('\/background/);
 });
 
