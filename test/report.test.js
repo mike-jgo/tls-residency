@@ -67,3 +67,13 @@ test('dummy staffers are left out of the report, so out of every total', () => {
   const store = { listUsers: () => users, getEventsForUser: () => [] };
   assert.deepStrictEqual(buildReport(store, 'boot', null, null).report.map((r) => r.name), ['Ana Cruz']);
 });
+
+test('EB and EAL staffers count for their section but are left out of the top ten', () => {
+  const { sections, staffers } = leaderboards([
+    row({ name: 'Eb', section: 'Web', status: 'EB', hours: 9 }),
+    row({ name: 'Eal', section: 'Web', status: 'EAL', hours: 8 }),
+    row({ name: 'Reg', section: 'Web', status: 'Regular', hours: 1 }),
+  ]);
+  assert.deepStrictEqual(staffers.map((p) => p.name), ['Reg']);
+  assert.deepStrictEqual(sections[0], { section: 'Web', hours: 18 });
+});
