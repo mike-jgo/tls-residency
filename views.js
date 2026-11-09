@@ -13,6 +13,15 @@ const SYSTEM = 'Staffer Attendance Monitoring System';
 const TZ = process.env.TZ || 'Asia/Manila';
 const hoursLimit = require('./lib/hours').MAX_SESSION_HOURS;
 const { SECTIONS, STATUSES } = require('./lib/people');
+// Section pill colours in the station's "In the office" list. Sports and Web
+// are light, so they take dark text; the rest take white.
+const SECTION_COLORS = {
+  University: ['#054805', '#fff'], Menagerie: ['#003075', '#fff'], Sports: ['#b09900', '#1a1a1a'],
+  Vanguard: ['#591258', '#fff'], Intermedia: ['#430808', '#fff'], Photo: ['#8a0303', '#fff'],
+  'A&G': ['#018181', '#fff'], Layout: ['#a64d15', '#fff'], Web: ['#b76e79', '#1a1a1a'],
+};
+const SECTION_CSS = Object.entries(SECTION_COLORS).map(([name, [bg, fg]]) =>
+  `  ul.people .section[data-section="${name}"]{background:${bg};color:${fg}}`).join('\n');
 const { MAX_BYTES: MAX_BG_BYTES } = require('./lib/appearance');
 
 function esc(v) {
@@ -956,10 +965,11 @@ function stationPage({ readerOnly = true, background = null } = {}) {
   ul.people li:last-child{border-bottom:0}
   ul.people .since{color:var(--muted);font-variant-numeric:tabular-nums}
   ul.people .who{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0}
-  ul.people .status{flex:none;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;
+  ul.people .status,ul.people .section{flex:none;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;
                     letter-spacing:.03em;line-height:18px;background:#eef2f7;color:var(--muted)}
   ul.people .status.s-regular{background:#e6f0fb;color:#1f5a96}
   ul.people .status.s-eb,ul.people .status.s-eal{background:#e4f2e8;color:#1d6b3a}
+${SECTION_CSS}
   ul.people .since{flex:none}
   .empty{color:var(--muted)}
   /* Taps can't be read: nothing else on the screen matters until it's clicked. */
@@ -1131,6 +1141,11 @@ ${navbar({
       var li = el('li');
       var who = el('span', 'who');
       who.appendChild(el('span', 'name', p.name));
+      if (p.section) {
+        var section = el('span', 'section', p.section);
+        section.setAttribute('data-section', p.section);
+        who.appendChild(section);
+      }
       if (p.status) who.appendChild(el('span', 'status s-' + String(p.status).toLowerCase(), p.status));
       li.appendChild(who);
       li.appendChild(el('span', 'since', 'since ' + time(p.since)));
