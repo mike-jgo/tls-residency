@@ -23,7 +23,7 @@ const SECTION_COLORS = {
 };
 const SECTION_CSS = Object.entries(SECTION_COLORS).map(([name, [bg, fg]]) =>
   `  .section[data-section="${name}"]{background:${bg};color:${fg}}\n  .fill[data-section="${name}"]{background:${bg}}`).join('\n');
-const { MAX_BYTES: MAX_BG_BYTES } = require('./lib/appearance');
+const { MAX_BYTES: MAX_BG_BYTES, THEMES } = require('./lib/appearance');
 
 function esc(v) {
   return String(v == null ? '' : v)
@@ -829,7 +829,7 @@ function hoursPage({ report, tabs = [], start, end, error, sync, local }) {
 // one is fetched while an unchanged one comes from the browser's cache.
 const backgroundUrl = (image) => (image ? `/background?v=${encodeURIComponent(image.version)}` : '');
 
-function appearancePage({ image, opacity, rankingsHidden, flash, error, local, sync }) {
+function appearancePage({ image, opacity, rankingsHidden, theme = 'none', flash, error, local, sync }) {
   const body = `
     <h1>Appearances</h1>
     <p class="sub">A picture behind the tap screen. The panels sit over it; set how see-through they are below. Their text always stays solid.</p>
@@ -877,6 +877,18 @@ function appearancePage({ image, opacity, rankingsHidden, flash, error, local, s
         <input type="hidden" name="rankings" value="${rankingsHidden ? 'show' : 'hide'}">
         <button class="btn${rankingsHidden ? '' : ' ghost'}" type="submit">${rankingsHidden ? 'Show rankings' : 'Hide rankings'}</button>
       </form>
+    </div>
+    <div class="panel">
+      <h2>Season</h2>
+      <form method="post" action="/admin/appearances" class="row bg-row">
+        <div>
+          <label for="bg-theme">Festive touches on the tap screen</label>
+          <select id="bg-theme" name="theme">${Object.entries(THEMES).map(([value, label]) =>
+            `<option value="${value}"${value === theme ? ' selected' : ''}>${esc(label)}</option>`).join('')}</select>
+        </div>
+        <button class="btn" type="submit">Save season</button>
+      </form>
+      <p class="why">Christmas: red and green colours, falling snow behind the panels and a string of lights along the top.</p>
     </div>
     <script>
       (function () {
@@ -933,7 +945,7 @@ function appearancePage({ image, opacity, rankingsHidden, flash, error, local, s
 }
 
 function stationPage({ readerOnly = true, background = null } = {}) {
-  const bg = background || { image: null, opacity: 100 };
+  const bg = background || { image: null, opacity: 100, theme: 'none' };
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -1017,6 +1029,34 @@ ${SECTION_CSS}
   #sync{display:none;font-size:15px;padding:7px 14px;border:0}
   /* The picture chosen under Admin > Appearance, behind everything else. */
   #bg{position:fixed;inset:0;z-index:-1;pointer-events:none;background:center/cover no-repeat}
+  #shut{z-index:3}
+  /* ---- Season: Christmas. Off, none of it shows (and nothing animates). ---- */
+  #snow,#lights{display:none;pointer-events:none}
+  .theme-christmas{--bg:#123d2b;--xmas-red:#b3261e;--xmas-green:#1d6b3a;--xmas-gold:#e0a526}
+  .theme-christmas .navbar.wide{border-bottom:0;position:relative;z-index:2}
+  .theme-christmas .navbar::after{content:"";position:absolute;left:0;right:0;bottom:-6px;height:6px;
+         background:repeating-linear-gradient(-45deg,var(--xmas-red) 0 10px,#fff 10px 20px,var(--xmas-green) 20px 30px,#fff 30px 40px)}
+  .theme-christmas .main,.theme-christmas .side{border:2px solid rgba(179,38,30,.35)}
+  .theme-christmas .main.idle .big{color:var(--xmas-green)}
+  .theme-christmas .side h2{color:var(--xmas-red)}
+  .theme-christmas ul.people li{border-bottom-color:rgba(29,107,58,.18)}
+  .theme-christmas ul.people .status.s-regular{background:#fbe4e2;color:#9a1f17}
+  /* Snow: behind the panels, falling on the picture. Only transforms animate,
+     so the Pi's GPU does the work. */
+  .theme-christmas #snow{display:block;position:fixed;inset:0;z-index:-1;overflow:hidden}
+  #snow i{position:absolute;top:-12px;border-radius:50%;background:#fff;
+          box-shadow:0 0 6px rgba(255,255,255,.8);animation:fall linear infinite;will-change:transform}
+  @keyframes fall{to{transform:translate3d(var(--drift),calc(100vh + 24px),0)}}
+  /* Lights: a wire swagging across the top of the panels, bulbs twinkling. */
+  .wrap{position:relative}
+  .theme-christmas #lights{display:block;position:absolute;left:0;right:0;top:10px;height:44px;z-index:1}
+  #lights svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+  #lights path{fill:none;stroke:#0b2418;stroke-width:2.5}
+  #lights .bulb{position:absolute;width:14px;height:22px;margin-left:-7px;border-radius:50% 50% 50% 50%/40% 40% 60% 60%;
+                background:var(--c);box-shadow:0 0 10px 3px var(--c);animation:twinkle 2.4s ease-in-out infinite}
+  #lights .bulb::before{content:"";position:absolute;left:3px;top:-6px;width:8px;height:7px;border-radius:2px;background:#2b3a30}
+  @keyframes twinkle{50%{opacity:.45;box-shadow:0 0 3px 1px var(--c)}}
+  @media (prefers-reduced-motion:reduce){ #snow i,#lights .bulb{animation:none} #snow{display:none!important} }
   .glyph svg{width:120px;height:120px;stroke-width:1.5;color:var(--muted)}${BADGE_CSS}${NAVBAR_CSS}
   #shut{position:fixed;inset:0;background:rgba(18,24,31,.55);display:none;align-items:center;justify-content:center}
   #shut.open{display:flex}
@@ -1040,8 +1080,9 @@ ${SECTION_CSS}
   }
 </style>
 </head>
-<body style="--card:${bg.opacity}%">
+<body style="--card:${bg.opacity}%" class="theme-${bg.theme || 'none'}">
 <div id="bg" aria-hidden="true"${bg.image ? ` style="background-image:url('${backgroundUrl(bg.image)}')"` : ''}></div>
+<div id="snow" aria-hidden="true"></div>
 <div id="unfocused">${icon('click')}Click to resume</div>
 <div id="offline" role="status"><span class="spin"></span>Reconnecting…</div>
 ${navbar({
@@ -1054,6 +1095,7 @@ ${navbar({
     ],
   })}
 <div class="wrap">
+  <div id="lights" aria-hidden="true"></div>
   <div class="main idle" id="main" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="side">
     <h2 id="in-title">In the office</h2>
@@ -1421,6 +1463,7 @@ ${navbar({
   // A new background from the admin site, applied in place.
   es.addEventListener('appearance', function (e) {
     var a = JSON.parse(e.data), bg = document.getElementById('bg');
+    document.body.className = 'theme-' + (a.theme || 'none');
     document.body.style.setProperty('--card', a.opacity + '%');
     bg.style.backgroundImage = a.image ? 'url(/background?v=' + encodeURIComponent(a.image.version) + ')' : 'none';
   });
@@ -1434,6 +1477,44 @@ ${navbar({
   tick(); setInterval(tick, 1000);
   renderMain(); renderSide(); checkFocus();
 })();
+</script>
+<script>
+  // ---- Season: snowflakes and a string of lights, built once. CSS shows them
+  // only while a theme that uses them is on.
+  (function () {
+    var snow = document.getElementById('snow');
+    for (var i = 0; i < 60; i++) {
+      var f = document.createElement('i'), size = 3 + Math.random() * 5;
+      f.style.left = (Math.random() * 100) + '%';
+      f.style.width = f.style.height = size + 'px';
+      f.style.opacity = (0.5 + Math.random() * 0.5).toFixed(2);
+      f.style.setProperty('--drift', Math.round(Math.random() * 120 - 60) + 'px');
+      // Bigger flakes are nearer, so they fall faster.
+      f.style.animationDuration = (16 - size + Math.random() * 6).toFixed(1) + 's';
+      f.style.animationDelay = (-Math.random() * 20).toFixed(1) + 's';
+      snow.appendChild(f);
+    }
+    var COLORS = ['#e53935', '#43a047', '#fbc02d', '#1e88e5', '#fb8c00'];
+    var SPAN = 64, SAG = 18;
+    var lights = document.getElementById('lights');
+    function string() {
+      var w = lights.clientWidth || lights.parentNode.clientWidth;
+      if (!w) return;
+      var n = Math.max(2, Math.round(w / SPAN)), step = w / n, d = 'M0 4', html = '';
+      for (var k = 0; k < n; k++) {
+        var x0 = k * step, mid = x0 + step / 2;
+        d += ' Q' + mid.toFixed(1) + ' ' + (4 + SAG * 2) + ' ' + (x0 + step).toFixed(1) + ' 4';
+        // The bulb hangs from the bottom of each swag.
+        html += '<span class="bulb" style="left:' + mid.toFixed(1) + 'px;top:' + (4 + SAG + 3) +
+          'px;--c:' + COLORS[k % COLORS.length] + ';animation-delay:' + (-(k * 0.37) % 2.4).toFixed(2) + 's"></span>';
+      }
+      lights.innerHTML = '<svg aria-hidden="true"><path d="' + d + '"/></svg>' + html;
+    }
+    string();
+    window.addEventListener('resize', string);
+    // Hidden while the theme is off, so measure again once it's on.
+    new MutationObserver(string).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  })();
 </script>
 </body>
 </html>`;

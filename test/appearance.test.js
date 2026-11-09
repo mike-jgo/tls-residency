@@ -41,7 +41,7 @@ test('parseOpacity keeps 0 to 100 and refuses anything else', () => {
 
 test('no picture until one is set, at the default opacity', () => {
   const { appearance } = setup();
-  assert.deepEqual(appearance.settings(), { image: null, opacity: DEFAULT_OPACITY });
+  assert.deepEqual(appearance.settings(), { image: null, opacity: DEFAULT_OPACITY, theme: 'none' });
 });
 
 test('a picture is stored beside the database and versioned', () => {
@@ -71,7 +71,7 @@ test('removing the picture keeps the opacity', () => {
   appearance.setImage(PNG);
   appearance.setOpacity('60');
   appearance.removeImage();
-  assert.deepEqual(appearance.settings(), { image: null, opacity: 60 });
+  assert.deepEqual(appearance.settings(), { image: null, opacity: 60, theme: 'none' });
   assert.equal(fs.existsSync(path.join(dir, 'background.img')), false);
   appearance.removeImage(); // twice is fine
 });
@@ -92,10 +92,10 @@ test('a missing file reads as no picture', () => {
 
 test('the tap screen shows the picture behind panels at their opacity', () => {
   const html = views.stationPage({ background: { image: { type: 'image/png', version: '123' }, opacity: 40 } });
-  assert.match(html, /<body style="--card:40%">/);
+  assert.match(html, /<body style="--card:40%"/);
   assert.match(html, /<div id="bg"[^>]*style="background-image:url\('\/background\?v=123'\)"/);
   const plain = views.stationPage();
-  assert.match(plain, /<body style="--card:100%">/);
+  assert.match(plain, /<body style="--card:100%"/);
   assert.doesNotMatch(plain, /background-image:url\('\/background/);
 });
 
@@ -122,4 +122,25 @@ test('the appearance page offers to hide or show the rankings', () => {
   const page = (rankingsHidden) => views.appearancePage({ image: null, opacity: 85, rankingsHidden });
   assert.match(page(false), /name="rankings" value="hide"/);
   assert.match(page(true), /name="rankings" value="show"/);
+});
+
+test('a season is one of the listed themes, and a bad one keeps the old', () => {
+  const { appearance } = setup();
+  appearance.setTheme('christmas');
+  assert.equal(appearance.settings().theme, 'christmas');
+  assert.throws(() => appearance.setTheme('halloween'), /listed seasons/);
+  assert.throws(() => appearance.setTheme('__proto__'), /listed seasons/);
+  assert.equal(appearance.settings().theme, 'christmas');
+  appearance.setTheme('none');
+  assert.equal(appearance.settings().theme, 'none');
+});
+
+test('the tap screen wears the season, and the admin page offers it', () => {
+  const html = views.stationPage({ background: { image: null, opacity: 85, theme: 'christmas' } });
+  assert.match(html, /<body [^>]*class="theme-christmas"/);
+  assert.match(html, /<div id="snow"/);
+  assert.match(html, /<div id="lights"/);
+  assert.match(views.stationPage(), /<body [^>]*class="theme-none"/);
+  const admin = views.appearancePage({ image: null, opacity: 85, theme: 'christmas', local: false, sync: null });
+  assert.match(admin, /<option value="christmas" selected>Christmas<\/option>/);
 });

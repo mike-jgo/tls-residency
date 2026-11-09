@@ -389,6 +389,7 @@ app.post('/admin/appearances', (req, res) => {
   }
   try {
     if (req.body.remove) appearance.removeImage();
+    else if (req.body.theme !== undefined) appearance.setTheme(req.body.theme);
     else appearance.setOpacity(req.body.opacity);
   } catch (e) {
     return res.status(400).send(views.appearancePage({
