@@ -7,6 +7,7 @@
  */
 
 const Database = require('better-sqlite3');
+const path = require('path');
 const { defaultDbPath } = require('./lib/dbpath');
 
 const DB_PATH = process.env.DB_PATH || defaultDbPath();
@@ -199,6 +200,8 @@ const replaceEvents = db.transaction((events, gone = []) => {
 const EMPTY_PERSON = { student_id: null, section: null, status: null, telegram: null };
 
 module.exports = {
+  // The folder the database is in; the tap screen's background is kept there too.
+  dir: path.dirname(path.resolve(DB_PATH)),
   getUserByRfid: (rfid) => stmt.userByRfid.get(rfid),
   getUser:       (id)   => stmt.userById.get(id),
   listUsers:     ()     => stmt.listUsers.all(),

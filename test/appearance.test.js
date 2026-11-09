@@ -1,0 +1,109 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { createAppearance, imageType, parseOpacity, DEFAULT_OPACITY, MAX_BYTES } = require('../lib/appearance');
+const views = require('../views');
+
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(16)]);
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(16)]);
+
+function setup() {
+  const meta = {};
+  const store = { getMeta: (k) => meta[k], setMeta: (k, v) => { meta[k] = v; } };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'residency-bg-'));
+  return { meta, dir, appearance: createAppearance({ store, dir }) };
+}
+
+test('imageType goes by the file’s first bytes', () => {
+  assert.equal(imageType(PNG), 'image/png');
+  assert.equal(imageType(JPEG), 'image/jpeg');
+  assert.equal(imageType(Buffer.from('RIFF\0\0\0\0WEBPVP8 ')), 'image/webp');
+  assert.equal(imageType(Buffer.from('GIF89a......')), 'image/gif');
+  assert.equal(imageType(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg">')), null);
+  assert.equal(imageType(Buffer.alloc(4)), null);
+  assert.equal(imageType('not a buffer'), null);
+});
+
+test('parseOpacity keeps 0 to 100 and refuses anything else', () => {
+  assert.equal(parseOpacity('40'), 40);
+  assert.equal(parseOpacity('0'), 0);
+  assert.equal(parseOpacity('250'), 100);
+  assert.equal(parseOpacity('33.6'), 34);
+  assert.equal(parseOpacity('-5'), null);
+  assert.equal(parseOpacity('abc'), null);
+  assert.equal(parseOpacity(''), null);
+  assert.equal(parseOpacity(undefined), null);
+});
+
+test('no picture until one is set, at the default opacity', () => {
+  const { appearance } = setup();
+  assert.deepEqual(appearance.settings(), { image: null, opacity: DEFAULT_OPACITY });
+});
+
+test('a picture is stored beside the database and versioned', () => {
+  const { appearance, dir } = setup();
+  appearance.setImage(PNG);
+  const s = appearance.settings();
+  assert.equal(s.image.type, 'image/png');
+  assert.ok(s.image.version);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'background.img')), PNG);
+  assert.equal(fs.existsSync(path.join(dir, 'background.img.tmp')), false);
+
+  appearance.setImage(JPEG);
+  assert.equal(appearance.settings().image.type, 'image/jpeg');
+});
+
+test('what isn’t a picture, or is too big, is refused and the old one kept', () => {
+  const { appearance } = setup();
+  appearance.setImage(PNG);
+  assert.throws(() => appearance.setImage(Buffer.from('#!/bin/sh\necho hi\n')), /isn.t a PNG/);
+  assert.throws(() => appearance.setImage(Buffer.alloc(0)), /No picture/);
+  assert.throws(() => appearance.setImage(Buffer.concat([PNG, Buffer.alloc(MAX_BYTES)])), /too big/);
+  assert.equal(appearance.settings().image.type, 'image/png');
+});
+
+test('removing the picture keeps the opacity', () => {
+  const { appearance, dir } = setup();
+  appearance.setImage(PNG);
+  appearance.setOpacity('60');
+  appearance.removeImage();
+  assert.deepEqual(appearance.settings(), { image: null, opacity: 60 });
+  assert.equal(fs.existsSync(path.join(dir, 'background.img')), false);
+  appearance.removeImage(); // twice is fine
+});
+
+test('a bad opacity is refused and the old one kept', () => {
+  const { appearance } = setup();
+  appearance.setOpacity('20');
+  assert.throws(() => appearance.setOpacity('lots'), /0 to 100/);
+  assert.equal(appearance.settings().opacity, 20);
+});
+
+test('a missing file reads as no picture', () => {
+  const { appearance } = setup();
+  appearance.setImage(PNG);
+  fs.rmSync(appearance.file);
+  assert.equal(appearance.settings().image, null);
+});
+
+test('the tap screen shows the picture at its opacity', () => {
+  const html = views.stationPage({ background: { image: { type: 'image/png', version: '123' }, opacity: 40 } });
+  assert.match(html, /<div id="bg"[^>]*opacity:0\.4;background-image:url\('\/background\?v=123'\)/);
+  const plain = views.stationPage();
+  assert.match(plain, /<div id="bg"[^>]*style="opacity:0"/);
+  assert.doesNotMatch(plain, /background-image:url\('\/background/);
+});
+
+test('the appearance page shows the slider at the saved value', () => {
+  const html = views.appearancePage({ image: null, opacity: 55, local: false, sync: null });
+  assert.match(html, /<input id="bg-opacity" name="opacity" type="range"[^>]*value="55"/);
+  assert.match(html, /No picture yet/);
+  assert.doesNotMatch(html, /Remove picture/);
+  const withImage = views.appearancePage({ image: { type: 'image/png', version: '9' }, opacity: 55, local: false, sync: null });
+  assert.match(withImage, /Remove picture/);
+  assert.match(withImage, /\/background\?v=9/);
+});

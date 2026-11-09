@@ -18,6 +18,7 @@ const backup = require('./lib/backup');
 const sheets = require('./lib/sheets');
 const { createSync } = require('./lib/sync');
 const views = require('./views');
+const { createAppearance, MAX_BYTES: BG_MAX_BYTES } = require('./lib/appearance');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -143,7 +144,7 @@ const isLocal = (req) => LOCAL_ADDRESSES.has(req.socket.remoteAddress);
 
 // Clicking the cloud in the header: sync now, then show the page they were on
 // with the result.
-const ADMIN_PAGES = new Set(['/admin', '/admin/users', '/admin/hours']);
+const ADMIN_PAGES = new Set(['/admin', '/admin/users', '/admin/hours', '/admin/appearances']);
 app.post('/admin/sync', async (req, res) => {
   if (sync) await sync.run();
   res.redirect(ADMIN_PAGES.has(req.body.back) ? req.body.back : '/admin');
@@ -347,6 +348,57 @@ app.get('/admin/hours.csv', (req, res) => {
   res.send(report.hoursCsv(rows));
 });
 
+// ---- Appearance -----------------------------------------------------------
+// The tap screen's background picture and how strongly it shows. A change
+// reaches an open tap screen straight away, over /station/events — the screen
+// is never reloaded, which would leave it waiting for a click to take taps.
+const appearance = createAppearance({ store, dir: store.dir });
+
+function showAppearance() {
+  for (const res of stationClients) sendEvent(res, 'appearance', appearance.settings());
+}
+
+app.get('/admin/appearances', (req, res) => {
+  const flash = { saved: 'Saved. The tap screen shows it now.', removed: 'Picture removed.' }[req.query.done];
+  res.send(views.appearancePage({ ...appearance.settings(), flash, local: isLocal(req), sync: syncStatus() }));
+});
+
+// The picture comes as the request body itself, sent by the page's script, so
+// no upload library is needed.
+app.post('/admin/appearances/image',
+  express.raw({ type: () => true, limit: BG_MAX_BYTES + 1 }),
+  (req, res) => {
+    try {
+      appearance.setImage(req.body);
+    } catch (e) {
+      return res.status(400).json({ ok: false, error: e.message });
+    }
+    console.log(`${logTime(new Date().toISOString())}  background picture changed`);
+    showAppearance();
+    res.json({ ok: true, ...appearance.settings() });
+  });
+
+app.post('/admin/appearances', (req, res) => {
+  try {
+    if (req.body.remove) appearance.removeImage();
+    else appearance.setOpacity(req.body.opacity);
+  } catch (e) {
+    return res.status(400).send(views.appearancePage({
+      ...appearance.settings(), error: e.message, local: isLocal(req), sync: syncStatus(),
+    }));
+  }
+  showAppearance();
+  res.redirect(`/admin/appearances?done=${req.body.remove ? 'removed' : 'saved'}`);
+});
+
+// Not behind the admin sign-in: the tap screen shows it, and it's only a picture.
+app.get('/background', (req, res) => {
+  const { image } = appearance.settings();
+  if (!image) return res.status(404).end();
+  res.set('Cache-Control', 'public, max-age=31536000, immutable'); // the URL carries the version
+  res.type(image.type).sendFile(appearance.file);
+});
+
 // ---- Tap screen ----------------------------------------------------------
 // The monitor at the reader shows /station full-screen, and the tap screen
 // *is* the reader's input: the reader is a USB keyboard, so a tap arrives in
@@ -397,7 +449,7 @@ function fromTapScreen(req, res, next) {
 app.get('/station', (req, res) => {
   auth.logout(req, res);
   res.set('Cache-Control', 'no-store');
-  res.send(views.stationPage({ readerOnly: process.platform === 'linux' }));
+  res.send(views.stationPage({ readerOnly: process.platform === 'linux', background: appearance.settings() }));
 });
 
 app.post('/station/tap', fromTapScreen, express.json(), (req, res) => {

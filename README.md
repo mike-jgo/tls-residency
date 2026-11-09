@@ -280,6 +280,16 @@ person at the monitor has to sign in again.
 The tap screen and the shutdown button only answer requests from the Pi itself;
 nobody on the network can switch it off.
 
+## Tap screen background
+
+**Admin → Appearances** puts a picture behind the tap screen: upload a PNG, JPEG,
+WebP or GIF (up to 8 MB), and set how strongly it shows with the opacity slider.
+An open tap screen picks up a change straight away, without reloading. The panels
+stay solid white, so names and times stay readable over any picture.
+
+The picture is kept as `background.img` beside `residency.db` (not inside it, so
+backups stay small); the opacity is kept in the database.
+
 ## Back up your data
 
 `residency.db` lives on the Pi's SD card, and SD cards fail. Unplugging without

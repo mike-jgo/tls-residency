@@ -13,6 +13,7 @@ const SYSTEM = 'Staffer Attendance Monitoring System';
 const TZ = process.env.TZ || 'Asia/Manila';
 const hoursLimit = require('./lib/hours').MAX_SESSION_HOURS;
 const { SECTIONS, STATUSES } = require('./lib/people');
+const { MAX_BYTES: MAX_BG_BYTES } = require('./lib/appearance');
 
 function esc(v) {
   return String(v == null ? '' : v)
@@ -164,6 +165,7 @@ function layout(title, body, active, local, sync) {
       ['/admin', 'Dashboard'],
       ['/admin/users', 'People'],
       ['/admin/hours', 'Hours'],
+      ['/admin/appearances', 'Appearances'],
     ];
   if (local) links.push(['/station', 'Tap screen']);
   const actions = [];
@@ -252,6 +254,19 @@ function layout(title, body, active, local, sync) {
   .why{margin:14px 0 0;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
   .why.error{color:var(--danger)}
   .why.offline{margin:0 0 14px;color:var(--out)}${BADGE_CSS}${NAVBAR_CSS}
+  .bg-preview{position:relative;aspect-ratio:16/9;max-height:340px;width:100%;border-radius:8px;overflow:hidden;
+              background:#f5f7fa;border:1px solid var(--line);isolation:isolate}
+  .bg-layer{position:absolute;inset:0;z-index:-1;background:center/cover no-repeat;opacity:var(--bg-opacity)}
+  .bg-mock{position:absolute;inset:8% 5%;display:grid;grid-template-columns:1fr 30%;gap:4%}
+  .bg-card{background:#fff;border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;
+           justify-content:center;font-weight:700;color:var(--muted);font-size:14px;text-align:center;padding:6px}
+  .bg-card.side{align-items:flex-start;padding-top:12px;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+  .bg-none{position:absolute;left:0;right:0;bottom:6px;margin:0;text-align:center;color:var(--muted);font-size:13px}
+  .bg-row{display:flex;flex-wrap:wrap;gap:12px;align-items:end}
+  .bg-row form{margin:0}
+  .bg-slider{flex:1;min-width:220px}
+  .bg-slider input{width:100%;accent-color:var(--brand)}
+  input[type=file]{font:inherit;max-width:100%}
   .caphint{color:var(--out);font-size:12px;margin:12px 0 0}
   /* A phone: forms go one box to a line, and a table too wide for its panel
      scrolls inside it. (The navbar stacks by its own rules.) */
@@ -798,7 +813,106 @@ function hoursPage({ report, tabs = [], start, end, error, sync, local }) {
  * Also where the day ends. Shut down lists who is still checked in first,
  * because anyone still in when the machine goes off loses that session.
  */
-function stationPage({ readerOnly = true } = {}) {
+// ---- Appearance ------------------------------------------------------------
+// The tap screen's background: the URL carries the picture's version, so a new
+// one is fetched while an unchanged one comes from the browser's cache.
+const backgroundUrl = (image) => (image ? `/background?v=${encodeURIComponent(image.version)}` : '');
+
+function appearancePage({ image, opacity, flash, error, local, sync }) {
+  const body = `
+    <h1>Appearances</h1>
+    <p class="sub">A picture behind the tap screen. The panels stay solid white over it, so names and times stay readable.</p>
+    ${flash ? `<p class="flash ok" role="status">${esc(flash)}</p>` : ''}
+    ${error ? `<p class="flash err" role="alert">${esc(error)}</p>` : ''}
+    <p class="flash err" id="bg-error" role="alert" hidden></p>
+    <div class="panel">
+      <h2>Preview</h2>
+      <div class="bg-preview" id="bg-preview" style="--bg-opacity:${opacity / 100}">
+        <div class="bg-layer" id="bg-layer"${image ? ` style="background-image:url('${backgroundUrl(image)}')"` : ''}></div>
+        <div class="bg-mock"><div class="bg-card">Tap your ID</div><div class="bg-card side">In the office</div></div>
+        ${image ? '' : '<p class="bg-none" id="bg-none">No picture yet</p>'}
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Picture</h2>
+      <div class="row bg-row">
+        <div>
+          <label for="bg-file">PNG, JPEG, WebP or GIF, up to 8 MB. Landscape works best.</label>
+          <input id="bg-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+        </div>
+        <button class="btn" id="bg-upload" type="button" disabled>Upload</button>
+        ${image ? `<form method="post" action="/admin/appearances">
+          <input type="hidden" name="remove" value="1">
+          <button class="btn ghost" type="submit">Remove picture</button>
+        </form>` : ''}
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Opacity</h2>
+      <form method="post" action="/admin/appearances" class="row bg-row">
+        <div class="bg-slider">
+          <label for="bg-opacity">How strongly the picture shows: <b id="bg-value">${opacity}%</b></label>
+          <input id="bg-opacity" name="opacity" type="range" min="0" max="100" step="5" value="${opacity}">
+        </div>
+        <button class="btn" type="submit">Save opacity</button>
+      </form>
+    </div>
+    <script>
+      (function () {
+        var preview = document.getElementById('bg-preview');
+        var slider = document.getElementById('bg-opacity');
+        var value = document.getElementById('bg-value');
+        slider.addEventListener('input', function () {
+          value.textContent = slider.value + '%';
+          preview.style.setProperty('--bg-opacity', slider.value / 100);
+        });
+
+        var file = document.getElementById('bg-file');
+        var upload = document.getElementById('bg-upload');
+        var error = document.getElementById('bg-error');
+        var layer = document.getElementById('bg-layer');
+        var shown = null;
+        function fail(message) { error.textContent = message; error.hidden = false; }
+        file.addEventListener('change', function () {
+          error.hidden = true;
+          var f = file.files[0];
+          upload.disabled = !f;
+          if (!f) return;
+          if (f.size > ${MAX_BG_BYTES}) { upload.disabled = true; return fail('That picture is too big (8 MB at most).'); }
+          if (shown) URL.revokeObjectURL(shown);
+          shown = URL.createObjectURL(f);
+          layer.style.backgroundImage = 'url(' + shown + ')';
+          var none = document.getElementById('bg-none');
+          if (none) none.hidden = true;
+        });
+        upload.addEventListener('click', function () {
+          var f = file.files[0];
+          if (!f) return;
+          upload.disabled = true;
+          upload.textContent = 'Uploading…';
+          fetch('/admin/appearances/image', { method: 'POST', body: f, headers: { 'Content-Type': 'application/octet-stream' } })
+            .then(function (r) {
+              return r.json().catch(function () {
+                throw new Error(r.status === 401 ? 'Your admin session ended. Sign in again.' : 'Upload failed (' + r.status + ').');
+              });
+            })
+            .then(function (j) {
+              if (!j.ok) throw new Error(j.error);
+              location.href = '/admin/appearances?done=saved';
+            })
+            .catch(function (e) {
+              fail(e.message || 'Upload failed. Check the connection and try again.');
+              upload.disabled = false;
+              upload.textContent = 'Upload';
+            });
+        });
+      })();
+    </script>`;
+  return layout('Appearances', body, '/admin/appearances', local, sync);
+}
+
+function stationPage({ readerOnly = true, background = null } = {}) {
+  const bg = background || { image: null, opacity: 0 };
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -857,6 +971,8 @@ function stationPage({ readerOnly = true } = {}) {
         border-radius:50%;animation:spin .8s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   #sync{display:none;font-size:15px;padding:7px 14px;border:0}
+  /* The picture chosen under Admin > Appearance, behind everything else. */
+  #bg{position:fixed;inset:0;z-index:-1;pointer-events:none;background:center/cover no-repeat}
   .glyph svg{width:120px;height:120px;stroke-width:1.5;color:var(--muted)}${BADGE_CSS}${NAVBAR_CSS}
   #shut{position:fixed;inset:0;background:rgba(18,24,31,.55);display:none;align-items:center;justify-content:center}
   #shut.open{display:flex}
@@ -881,6 +997,7 @@ function stationPage({ readerOnly = true } = {}) {
 </style>
 </head>
 <body>
+<div id="bg" aria-hidden="true" style="opacity:${bg.opacity / 100}${bg.image ? `;background-image:url('${backgroundUrl(bg.image)}')` : ''}"></div>
 <div id="unfocused">${icon('click')}Click to resume</div>
 <div id="offline" role="status"><span class="spin"></span>Reconnecting…</div>
 ${navbar({
@@ -1204,6 +1321,12 @@ ${navbar({
     if (!shuttingDown) document.getElementById('offline').style.display = 'flex';
     renderMain(); renderSide(); renderShut();
   };
+  // A new background from the admin site, applied in place.
+  es.addEventListener('appearance', function (e) {
+    var a = JSON.parse(e.data), bg = document.getElementById('bg');
+    bg.style.opacity = a.opacity / 100;
+    bg.style.backgroundImage = a.image ? 'url(/background?v=' + encodeURIComponent(a.image.version) + ')' : 'none';
+  });
   es.addEventListener('status', function (e) {
     status = JSON.parse(e.data);
     connected = true;
@@ -1219,4 +1342,4 @@ ${navbar({
 </html>`;
 }
 
-module.exports = { loginPage, dashboardPage, dashboardLive, registerPage, usersPage, hoursPage, stationPage, syncBadge };
+module.exports = { loginPage, dashboardPage, dashboardLive, registerPage, usersPage, hoursPage, appearancePage, stationPage, syncBadge };
