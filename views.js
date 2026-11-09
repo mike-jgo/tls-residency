@@ -13,15 +13,16 @@ const SYSTEM = 'Staffer Attendance Monitoring System';
 const TZ = process.env.TZ || 'Asia/Manila';
 const hoursLimit = require('./lib/hours').MAX_SESSION_HOURS;
 const { SECTIONS, STATUSES } = require('./lib/people');
-// Section pill colours in the station's "In the office" list. Sports and Web
-// are light, so they take dark text; the rest take white.
+// Section colours on the tap screen: the pills in In the office and the bars
+// in the leaderboard. Sports and Web are light, so their pills take dark text;
+// the rest take white.
 const SECTION_COLORS = {
   University: ['#054805', '#fff'], Menagerie: ['#003075', '#fff'], Sports: ['#b09900', '#1a1a1a'],
   Vanguard: ['#591258', '#fff'], Intermedia: ['#430808', '#fff'], Photo: ['#8a0303', '#fff'],
   'A&G': ['#018181', '#fff'], Layout: ['#a64d15', '#fff'], Web: ['#b76e79', '#1a1a1a'],
 };
 const SECTION_CSS = Object.entries(SECTION_COLORS).map(([name, [bg, fg]]) =>
-  `  ul.people .section[data-section="${name}"]{background:${bg};color:${fg}}`).join('\n');
+  `  .section[data-section="${name}"]{background:${bg};color:${fg}}\n  .fill[data-section="${name}"]{background:${bg}}`).join('\n');
 const { MAX_BYTES: MAX_BG_BYTES } = require('./lib/appearance');
 
 function esc(v) {
@@ -266,7 +267,8 @@ function layout(title, body, active, local, sync) {
   .bg-preview{position:relative;aspect-ratio:16/9;max-height:340px;width:100%;border-radius:8px;overflow:hidden;
               background:#f5f7fa;border:1px solid var(--line);isolation:isolate}
   .bg-layer{position:absolute;inset:0;z-index:-1;background:center/cover no-repeat}
-  .bg-mock{position:absolute;inset:8% 5%;display:grid;grid-template-columns:1fr 30%;gap:4%}
+  .bg-mock{position:absolute;inset:8% 5%;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:4%}
+  .bg-mock .bg-card:first-child{grid-row:1 / 3}
   .bg-card{background:color-mix(in srgb,#fff var(--card),transparent);border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;
            justify-content:center;font-weight:700;color:var(--muted);font-size:14px;text-align:center;padding:6px}
   .bg-card.side{align-items:flex-start;padding-top:12px;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
@@ -827,7 +829,7 @@ function hoursPage({ report, tabs = [], start, end, error, sync, local }) {
 // one is fetched while an unchanged one comes from the browser's cache.
 const backgroundUrl = (image) => (image ? `/background?v=${encodeURIComponent(image.version)}` : '');
 
-function appearancePage({ image, opacity, flash, error, local, sync }) {
+function appearancePage({ image, opacity, rankingsHidden, flash, error, local, sync }) {
   const body = `
     <h1>Appearances</h1>
     <p class="sub">A picture behind the tap screen. The panels sit over it; set how see-through they are below. Their text always stays solid.</p>
@@ -838,7 +840,7 @@ function appearancePage({ image, opacity, flash, error, local, sync }) {
       <h2>Preview</h2>
       <div class="bg-preview" id="bg-preview" style="--card:${opacity}%">
         <div class="bg-layer" id="bg-layer"${image ? ` style="background-image:url('${backgroundUrl(image)}')"` : ''}></div>
-        <div class="bg-mock"><div class="bg-card">Tap your ID</div><div class="bg-card side">In the office</div></div>
+        <div class="bg-mock"><div class="bg-card">Tap your ID</div><div class="bg-card side">In the office</div><div class="bg-card side">Leaderboard</div></div>
         ${image ? '' : '<p class="bg-none" id="bg-none">No picture yet</p>'}
       </div>
     </div>
@@ -864,6 +866,16 @@ function appearancePage({ image, opacity, flash, error, local, sync }) {
           <input id="bg-opacity" name="opacity" type="range" min="0" max="100" step="5" value="${opacity}">
         </div>
         <button class="btn" type="submit">Save opacity</button>
+      </form>
+    </div>
+    <div class="panel">
+      <h2>Leaderboard</h2>
+      <form method="post" action="/admin/appearances" class="row bg-row">
+        <p>${rankingsHidden
+    ? '<b>Rankings are hidden.</b> The tap screen says results are coming soon until you show them.'
+    : 'Rankings are showing on the tap screen. Hide them for suspense before you post the results.'}</p>
+        <input type="hidden" name="rankings" value="${rankingsHidden ? 'show' : 'hide'}">
+        <button class="btn${rankingsHidden ? '' : ' ghost'}" type="submit">${rankingsHidden ? 'Show rankings' : 'Hide rankings'}</button>
       </form>
     </div>
     <script>
@@ -940,7 +952,10 @@ function stationPage({ readerOnly = true, background = null } = {}) {
   body{margin:0;font:18px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
        color:var(--ink);background:var(--bg);display:flex;flex-direction:column;cursor:default}
   #now{font-variant-numeric:tabular-nums;color:var(--muted)}
-  .wrap{flex:1;display:grid;grid-template-columns:1fr 340px;gap:24px;padding:24px 28px;min-height:0}
+  /* Tap result on the left; In the office top right, the leaderboard bottom right. */
+  .wrap{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:minmax(0,1fr) minmax(0,1fr);
+        gap:24px;padding:24px 28px;min-height:0}
+  .main{grid-row:1 / 3}
   /* --card is the panels' opacity, set under Admin > Appearances. Only their
      backgrounds fade; the text on them stays solid. */
   .main{display:flex;align-items:center;justify-content:center;border-radius:var(--radius);
@@ -965,12 +980,27 @@ function stationPage({ readerOnly = true, background = null } = {}) {
   ul.people li:last-child{border-bottom:0}
   ul.people .since{color:var(--muted);font-variant-numeric:tabular-nums}
   ul.people .who{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0}
-  ul.people .status,ul.people .section{flex:none;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;
+  ul.people .status,.section{flex:none;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;
                     letter-spacing:.03em;line-height:18px;background:#eef2f7;color:var(--muted)}
   ul.people .status.s-regular{background:#e6f0fb;color:#1f5a96}
   ul.people .status.s-eb,ul.people .status.s-eal{background:#e4f2e8;color:#1d6b3a}
 ${SECTION_CSS}
   ul.people .since{flex:none}
+  /* Leaderboard: two horizontal bar charts, each bar in its section's colour,
+     its length against that chart's leader, the hours printed at its end. */
+  .charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px 28px}
+  .charts h3{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 6px}
+  .board-hidden{height:calc(100% - 40px);flex-direction:column;align-items:center;justify-content:center;
+                gap:6px;text-align:center;color:var(--muted)}
+  .board-hidden b{font-size:32px;font-weight:800;color:var(--ink)}
+  ol.chart{list-style:none;margin:0;padding:0;font-size:14px}
+  ol.chart li{display:grid;grid-template-columns:18px 112px minmax(0,1fr);align-items:center;gap:8px;padding:3px 0}
+  ol.chart .rank{color:var(--muted);font-variant-numeric:tabular-nums}
+  ol.chart .label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  ol.chart .track{display:flex;align-items:center;gap:6px;min-width:0}
+  ol.chart .fill{flex:none;height:12px;min-width:2px;border-radius:0 4px 4px 0}
+  .fill{background:var(--muted)}
+  ol.chart .hrs{flex:none;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
   .empty{color:var(--muted)}
   /* Taps can't be read: nothing else on the screen matters until it's clicked. */
   #unfocused{position:fixed;inset:0;z-index:5;display:none;flex-direction:column;align-items:center;
@@ -1028,6 +1058,14 @@ ${navbar({
   <div class="side">
     <h2 id="in-title">In the office</h2>
     <ul class="people" id="in-list"></ul>
+  </div>
+  <div class="side">
+    <h2 id="board-title">Leaderboard</h2>
+    <div class="board-hidden" id="board-hidden" style="display:none"><b>Results coming soon</b>Rankings are hidden until they’re posted.</div>
+    <div class="charts" id="board-charts">
+      <div><h3>Sections</h3><ol class="chart" id="board-sections"></ol></div>
+      <div><h3>Top 10 staffers</h3><ol class="chart" id="board-staffers"></ol></div>
+    </div>
   </div>
 </div>
 <div id="shut" role="dialog" aria-modal="true" aria-labelledby="shut-title">
@@ -1141,11 +1179,7 @@ ${navbar({
       var li = el('li');
       var who = el('span', 'who');
       who.appendChild(el('span', 'name', p.name));
-      if (p.section) {
-        var section = el('span', 'section', p.section);
-        section.setAttribute('data-section', p.section);
-        who.appendChild(section);
-      }
+      if (p.section) who.appendChild(sectionPill(p.section));
       if (p.status) who.appendChild(el('span', 'status s-' + String(p.status).toLowerCase(), p.status));
       li.appendChild(who);
       li.appendChild(el('span', 'since', 'since ' + time(p.since)));
@@ -1160,6 +1194,50 @@ ${navbar({
     var list = peopleList(document.getElementById('in-list'));
     if (!connected) { list.textContent = ''; list.appendChild(el('li', 'empty', 'Waiting for the office computer.')); }
     else if (!n) list.appendChild(el('li', 'empty', 'Nobody is checked in.'));
+  }
+
+  function sectionPill(section) {
+    var pill = el('span', 'section', section);
+    pill.setAttribute('data-section', section);
+    return pill;
+  }
+
+  // One bar: rank, label, then a bar as long as hours / max (in the section's
+  // colour) with the hours just past its end.
+  function barRow(rank, label, section, hours, max) {
+    var li = el('li');
+    li.appendChild(el('span', 'rank', String(rank)));
+    li.appendChild(el('span', 'label', label));
+    var track = el('span', 'track');
+    var fill = el('span', 'fill');
+    if (section) fill.setAttribute('data-section', section);
+    // Leaves room after the longest bar for its number.
+    fill.style.width = 'calc((100% - 52px) * ' + (max > 0 ? hours / max : 0) + ')';
+    track.appendChild(fill);
+    track.appendChild(el('span', 'hrs', hours.toFixed(1) + ' h'));
+    li.appendChild(track);
+    return li;
+  }
+
+  function renderBoards() {
+    var b = status.leaderboards;
+    var sections = document.getElementById('board-sections');
+    var staffers = document.getElementById('board-staffers');
+    sections.textContent = ''; staffers.textContent = '';
+    document.getElementById('board-title').textContent = b ? 'Leaderboard · ' + b.month : 'Leaderboard';
+    var hidden = Boolean(b && b.hidden);
+    document.getElementById('board-hidden').style.display = hidden ? 'flex' : 'none';
+    document.getElementById('board-charts').style.display = hidden ? 'none' : '';
+    if (!b || hidden) return;
+    var top = b.sections.length ? b.sections[0].hours : 0;
+    b.sections.forEach(function (s, i) {
+      sections.appendChild(barRow(i + 1, s.section, s.section, s.hours, top));
+    });
+    top = b.staffers.length ? b.staffers[0].hours : 0;
+    b.staffers.forEach(function (p, i) {
+      staffers.appendChild(barRow(i + 1, p.name, p.section, p.hours, top));
+    });
+    if (!b.staffers.length) staffers.appendChild(el('li', 'empty', 'No hours yet this month.'));
   }
 
   function svg(name) {
@@ -1350,7 +1428,7 @@ ${navbar({
     status = JSON.parse(e.data);
     connected = true;
     document.getElementById('offline').style.display = 'none';
-    renderMain(); renderSide(); renderShut(); renderSync();
+    renderMain(); renderSide(); renderShut(); renderSync(); renderBoards();
   });
 
   tick(); setInterval(tick, 1000);

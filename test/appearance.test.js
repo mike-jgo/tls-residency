@@ -108,3 +108,18 @@ test('the appearance page shows the slider at the saved value', () => {
   assert.match(withImage, /Remove picture/);
   assert.match(withImage, /\/background\?v=9/);
 });
+
+test('the rankings show until hidden, and come back when shown again', () => {
+  const { appearance } = setup();
+  assert.equal(appearance.rankingsHidden(), false);
+  appearance.setRankingsHidden(true);
+  assert.equal(appearance.rankingsHidden(), true);
+  appearance.setRankingsHidden(false);
+  assert.equal(appearance.rankingsHidden(), false);
+});
+
+test('the appearance page offers to hide or show the rankings', () => {
+  const page = (rankingsHidden) => views.appearancePage({ image: null, opacity: 85, rankingsHidden });
+  assert.match(page(false), /name="rankings" value="hide"/);
+  assert.match(page(true), /name="rankings" value="show"/);
+});

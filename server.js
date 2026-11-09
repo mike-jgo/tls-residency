@@ -359,8 +359,11 @@ function showAppearance() {
 }
 
 app.get('/admin/appearances', (req, res) => {
-  const flash = { saved: 'Saved. The tap screen shows it now.', removed: 'Picture removed.' }[req.query.done];
-  res.send(views.appearancePage({ ...appearance.settings(), flash, local: isLocal(req), sync: syncStatus() }));
+  const flash = {
+    saved: 'Saved. The tap screen shows it now.', removed: 'Picture removed.',
+    hidden: 'Rankings hidden. The tap screen no longer shows them.', shown: 'Rankings shown on the tap screen.',
+  }[req.query.done];
+  res.send(views.appearancePage({ ...appearance.settings(), rankingsHidden: appearance.rankingsHidden(), flash, local: isLocal(req), sync: syncStatus() }));
 });
 
 // The picture comes as the request body itself, sent by the page's script, so
@@ -379,12 +382,17 @@ app.post('/admin/appearances/image',
   });
 
 app.post('/admin/appearances', (req, res) => {
+  if (req.body.rankings === 'hide' || req.body.rankings === 'show') {
+    appearance.setRankingsHidden(req.body.rankings === 'hide');
+    showStatus();
+    return res.redirect(`/admin/appearances?done=${req.body.rankings === 'hide' ? 'hidden' : 'shown'}`);
+  }
   try {
     if (req.body.remove) appearance.removeImage();
     else appearance.setOpacity(req.body.opacity);
   } catch (e) {
     return res.status(400).send(views.appearancePage({
-      ...appearance.settings(), error: e.message, local: isLocal(req), sync: syncStatus(),
+      ...appearance.settings(), rankingsHidden: appearance.rankingsHidden(), error: e.message, local: isLocal(req), sync: syncStatus(),
     }));
   }
   showAppearance();
@@ -422,7 +430,19 @@ function stationStatus() {
     // here and uploaded later.
     sync: sync ? views.syncBadge(sync.status()) : null,
     currentlyIn: store.getCurrentlyIn(BOOT_ID).map((u) => ({ name: u.name, section: u.section, status: u.status, since: u.since })),
+    leaderboards: monthLeaderboards(),
   };
+}
+
+// This month's section and staffer leaderboards, from the taps on this device.
+// While the rankings are hidden (Admin > Appearances) they aren't worked out or
+// sent at all, so the tap screen has nothing to peek at.
+function monthLeaderboards() {
+  const { y, m } = dates.monthOf(new Date().toISOString());
+  const month = dates.monthTitle(y, m);
+  if (appearance.rankingsHidden()) return { month, hidden: true };
+  const { startISO, endISO } = dates.monthBounds(y, m);
+  return { month, ...report.leaderboards(buildReport(startISO, endISO).report) };
 }
 
 function showStatus() {
