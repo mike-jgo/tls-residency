@@ -944,6 +944,43 @@ function appearancePage({ image, opacity, rankingsHidden, theme = 'none', flash,
   return layout('Appearances', body, '/admin/appearances', local, sync);
 }
 
+/*
+ * Christmas snow, cheap enough for a Pi 3. Not one element per flake: each
+ * layer is a single picture of scattered flakes, tiled, that slides down by
+ * exactly one tile and starts again, so the loop has no seam. Two layers, a
+ * near one with big flakes and a far one with small faint ones, give depth.
+ * The flakes are drawn once into the picture, so their soft edges cost
+ * nothing per frame, and the layers move in steps, 15 a second, not 60.
+ */
+const SNOW_FPS = 15;
+const SNOW_LAYERS = [
+  // tile: px square; flakes per tile; radius range; opacity; seconds per tile.
+  { name: 'near', tile: 480, flakes: 7, r: [2.5, 4.5], opacity: [0.75, 1], secs: 7 },
+  { name: 'far', tile: 400, flakes: 8, r: [1.2, 2.2], opacity: [0.4, 0.7], secs: 11 },
+];
+function snowTile({ tile, flakes, r, opacity }, seed) {
+  // A fixed seed, so the page is the same on every load.
+  let s = seed;
+  const rand = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  const between = ([lo, hi]) => lo + rand() * (hi - lo);
+  let dots = '';
+  for (let i = 0; i < flakes; i++) {
+    dots += `<circle cx="${(rand() * tile).toFixed(1)}" cy="${(rand() * tile).toFixed(1)}" r="${between(r).toFixed(1)}"`
+      + ` fill="url(#f)" opacity="${between(opacity).toFixed(2)}"/>`;
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${tile}" height="${tile}">`
+    + '<defs><radialGradient id="f"><stop offset="0" stop-color="#fff"/><stop offset=".55" stop-color="#fff" stop-opacity=".9"/>'
+    + `<stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs>${dots}</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+const SNOW_CSS = SNOW_LAYERS.map((layer, i) => {
+  const { name, tile, secs } = layer;
+  return `
+  #snow .${name}{top:-${tile}px;height:calc(100% + ${tile}px);background-image:${snowTile(layer, 7 + i * 101)};
+    background-size:${tile}px ${tile}px;animation:snow-${name} ${secs}s steps(${secs * SNOW_FPS}) infinite}
+  @keyframes snow-${name}{to{transform:translate3d(0,${tile}px,0)}}`;
+}).join('');
+
 function stationPage({ readerOnly = true, background = null } = {}) {
   const bg = background || { image: null, opacity: 100, theme: 'none' };
   return `<!doctype html>
@@ -1041,22 +1078,19 @@ ${SECTION_CSS}
   .theme-christmas .side h2{color:var(--xmas-red)}
   .theme-christmas ul.people li{border-bottom-color:rgba(29,107,58,.18)}
   .theme-christmas ul.people .status.s-regular{background:#fbe4e2;color:#9a1f17}
-  /* Snow: behind the panels, falling on the picture. Only transforms animate,
-     so the Pi's GPU does the work. */
+  /* Snow: behind the panels, falling on the picture. See SNOW_LAYERS. */
   .theme-christmas #snow{display:block;position:fixed;inset:0;z-index:-1;overflow:hidden}
-  #snow i{position:absolute;top:-12px;border-radius:50%;background:#fff;
-          box-shadow:0 0 6px rgba(255,255,255,.8);animation:fall linear infinite;will-change:transform}
-  @keyframes fall{to{transform:translate3d(var(--drift),calc(100vh + 24px),0)}}
-  /* Lights: a wire swagging across the top of the panels, bulbs twinkling. */
+  #snow b{position:absolute;left:0;right:0;background-repeat:repeat;will-change:transform}${SNOW_CSS}
+  @media (prefers-reduced-motion:reduce){ #snow{display:none!important} }
+  /* Lights: a wire swagging across the top of the panels. They stay still:
+     twinkling them kept the Pi 3 busy. */
   .wrap{position:relative}
   .theme-christmas #lights{display:block;position:absolute;left:0;right:0;top:10px;height:44px;z-index:1}
   #lights svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
   #lights path{fill:none;stroke:#0b2418;stroke-width:2.5}
   #lights .bulb{position:absolute;width:14px;height:22px;margin-left:-7px;border-radius:50% 50% 50% 50%/40% 40% 60% 60%;
-                background:var(--c);box-shadow:0 0 10px 3px var(--c);animation:twinkle 2.4s ease-in-out infinite}
+                background:var(--c);box-shadow:0 0 10px 3px var(--c)}
   #lights .bulb::before{content:"";position:absolute;left:3px;top:-6px;width:8px;height:7px;border-radius:2px;background:#2b3a30}
-  @keyframes twinkle{50%{opacity:.45;box-shadow:0 0 3px 1px var(--c)}}
-  @media (prefers-reduced-motion:reduce){ #snow i,#lights .bulb{animation:none} #snow{display:none!important} }
   .glyph svg{width:120px;height:120px;stroke-width:1.5;color:var(--muted)}${BADGE_CSS}${NAVBAR_CSS}
   #shut{position:fixed;inset:0;background:rgba(18,24,31,.55);display:none;align-items:center;justify-content:center}
   #shut.open{display:flex}
@@ -1082,7 +1116,7 @@ ${SECTION_CSS}
 </head>
 <body style="--card:${bg.opacity}%" class="theme-${bg.theme || 'none'}">
 <div id="bg" aria-hidden="true"${bg.image ? ` style="background-image:url('${backgroundUrl(bg.image)}')"` : ''}></div>
-<div id="snow" aria-hidden="true"></div>
+<div id="snow" aria-hidden="true">${SNOW_LAYERS.slice().reverse().map((l) => `<b class="${l.name}"></b>`).join('')}</div>
 <div id="unfocused">${icon('click')}Click to resume</div>
 <div id="offline" role="status"><span class="spin"></span>Reconnecting…</div>
 ${navbar({
@@ -1479,21 +1513,9 @@ ${navbar({
 })();
 </script>
 <script>
-  // ---- Season: snowflakes and a string of lights, built once. CSS shows them
-  // only while a theme that uses them is on.
+  // ---- Season: a string of lights, built once. CSS shows it only while a
+  // theme that uses it is on.
   (function () {
-    var snow = document.getElementById('snow');
-    for (var i = 0; i < 60; i++) {
-      var f = document.createElement('i'), size = 3 + Math.random() * 5;
-      f.style.left = (Math.random() * 100) + '%';
-      f.style.width = f.style.height = size + 'px';
-      f.style.opacity = (0.5 + Math.random() * 0.5).toFixed(2);
-      f.style.setProperty('--drift', Math.round(Math.random() * 120 - 60) + 'px');
-      // Bigger flakes are nearer, so they fall faster.
-      f.style.animationDuration = (16 - size + Math.random() * 6).toFixed(1) + 's';
-      f.style.animationDelay = (-Math.random() * 20).toFixed(1) + 's';
-      snow.appendChild(f);
-    }
     var COLORS = ['#e53935', '#43a047', '#fbc02d', '#1e88e5', '#fb8c00'];
     var SPAN = 64, SAG = 18;
     var lights = document.getElementById('lights');
@@ -1506,7 +1528,7 @@ ${navbar({
         d += ' Q' + mid.toFixed(1) + ' ' + (4 + SAG * 2) + ' ' + (x0 + step).toFixed(1) + ' 4';
         // The bulb hangs from the bottom of each swag.
         html += '<span class="bulb" style="left:' + mid.toFixed(1) + 'px;top:' + (4 + SAG + 3) +
-          'px;--c:' + COLORS[k % COLORS.length] + ';animation-delay:' + (-(k * 0.37) % 2.4).toFixed(2) + 's"></span>';
+          'px;--c:' + COLORS[k % COLORS.length] + '"></span>';
       }
       lights.innerHTML = '<svg aria-hidden="true"><path d="' + d + '"/></svg>' + html;
     }

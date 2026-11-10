@@ -138,8 +138,14 @@ test('a season is one of the listed themes, and a bad one keeps the old', () => 
 test('the tap screen wears the season, and the admin page offers it', () => {
   const html = views.stationPage({ background: { image: null, opacity: 85, theme: 'christmas' } });
   assert.match(html, /<body [^>]*class="theme-christmas"/);
-  assert.match(html, /<div id="snow"/);
   assert.match(html, /<div id="lights"/);
+  // The snow is a couple of sliding pictures, not an element per flake, and
+  // the lights stay still: on the Pi 3 the old snowfall and twinkling kept a
+  // core busy all day.
+  const snow = html.match(/<div id="snow"[^>]*>(.*?)<\/div>/);
+  assert.ok(snow, 'the snow is on the page');
+  assert.ok((snow[1].match(/<b /g) || []).length <= 2);
+  assert.doesNotMatch(html, /createElement\('i'\)|@keyframes twinkle/);
   assert.match(views.stationPage(), /<body [^>]*class="theme-none"/);
   const admin = views.appearancePage({ image: null, opacity: 85, theme: 'christmas', local: false, sync: null });
   assert.match(admin, /<option value="christmas" selected>Christmas<\/option>/);
