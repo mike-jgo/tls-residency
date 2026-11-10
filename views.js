@@ -888,7 +888,7 @@ function appearancePage({ image, opacity, rankingsHidden, theme = 'none', flash,
         </div>
         <button class="btn" type="submit">Save season</button>
       </form>
-      <p class="why">Christmas: red and green colours, falling snow behind the panels and a string of lights along the top.</p>
+      <p class="why">Christmas: red and green colours, a candy-cane stripe and a string of lights along the top. Nothing moves, so the Pi stays cool.</p>
     </div>
     <script>
       (function () {
@@ -943,43 +943,6 @@ function appearancePage({ image, opacity, rankingsHidden, theme = 'none', flash,
     </script>`;
   return layout('Appearances', body, '/admin/appearances', local, sync);
 }
-
-/*
- * Christmas snow, cheap enough for a Pi 3. Not one element per flake: each
- * layer is a single picture of scattered flakes, tiled, that slides down by
- * exactly one tile and starts again, so the loop has no seam. Two layers, a
- * near one with big flakes and a far one with small faint ones, give depth.
- * The flakes are drawn once into the picture, so their soft edges cost
- * nothing per frame, and the layers move in steps, 15 a second, not 60.
- */
-const SNOW_FPS = 15;
-const SNOW_LAYERS = [
-  // tile: px square; flakes per tile; radius range; opacity; seconds per tile.
-  { name: 'near', tile: 480, flakes: 7, r: [2.5, 4.5], opacity: [0.75, 1], secs: 7 },
-  { name: 'far', tile: 400, flakes: 8, r: [1.2, 2.2], opacity: [0.4, 0.7], secs: 11 },
-];
-function snowTile({ tile, flakes, r, opacity }, seed) {
-  // A fixed seed, so the page is the same on every load.
-  let s = seed;
-  const rand = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
-  const between = ([lo, hi]) => lo + rand() * (hi - lo);
-  let dots = '';
-  for (let i = 0; i < flakes; i++) {
-    dots += `<circle cx="${(rand() * tile).toFixed(1)}" cy="${(rand() * tile).toFixed(1)}" r="${between(r).toFixed(1)}"`
-      + ` fill="url(#f)" opacity="${between(opacity).toFixed(2)}"/>`;
-  }
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${tile}" height="${tile}">`
-    + '<defs><radialGradient id="f"><stop offset="0" stop-color="#fff"/><stop offset=".55" stop-color="#fff" stop-opacity=".9"/>'
-    + `<stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs>${dots}</svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
-}
-const SNOW_CSS = SNOW_LAYERS.map((layer, i) => {
-  const { name, tile, secs } = layer;
-  return `
-  #snow .${name}{top:-${tile}px;height:calc(100% + ${tile}px);background-image:${snowTile(layer, 7 + i * 101)};
-    background-size:${tile}px ${tile}px;animation:snow-${name} ${secs}s steps(${secs * SNOW_FPS}) infinite}
-  @keyframes snow-${name}{to{transform:translate3d(0,${tile}px,0)}}`;
-}).join('');
 
 function stationPage({ readerOnly = true, background = null } = {}) {
   const bg = background || { image: null, opacity: 100, theme: 'none' };
@@ -1067,8 +1030,10 @@ ${SECTION_CSS}
   /* The picture chosen under Admin > Appearance, behind everything else. */
   #bg{position:fixed;inset:0;z-index:-1;pointer-events:none;background:center/cover no-repeat}
   #shut{z-index:3}
-  /* ---- Season: Christmas. Off, none of it shows (and nothing animates). ---- */
-  #snow,#lights{display:none;pointer-events:none}
+  /* ---- Season: Christmas. Nothing in it moves: the Pi 3 draws the screen
+     in software, so any animation redraws all of it, and snowfall kept a
+     core busy all day. ---- */
+  #lights{display:none;pointer-events:none}
   .theme-christmas{--bg:#123d2b;--xmas-red:#b3261e;--xmas-green:#1d6b3a;--xmas-gold:#e0a526}
   .theme-christmas .navbar.wide{border-bottom:0;position:relative;z-index:2}
   .theme-christmas .navbar::after{content:"";position:absolute;left:0;right:0;bottom:-6px;height:6px;
@@ -1078,12 +1043,7 @@ ${SECTION_CSS}
   .theme-christmas .side h2{color:var(--xmas-red)}
   .theme-christmas ul.people li{border-bottom-color:rgba(29,107,58,.18)}
   .theme-christmas ul.people .status.s-regular{background:#fbe4e2;color:#9a1f17}
-  /* Snow: behind the panels, falling on the picture. See SNOW_LAYERS. */
-  .theme-christmas #snow{display:block;position:fixed;inset:0;z-index:-1;overflow:hidden}
-  #snow b{position:absolute;left:0;right:0;background-repeat:repeat;will-change:transform}${SNOW_CSS}
-  @media (prefers-reduced-motion:reduce){ #snow{display:none!important} }
-  /* Lights: a wire swagging across the top of the panels. They stay still:
-     twinkling them kept the Pi 3 busy. */
+  /* Lights: a wire swagging across the top of the panels. */
   .wrap{position:relative}
   .theme-christmas #lights{display:block;position:absolute;left:0;right:0;top:10px;height:44px;z-index:1}
   #lights svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
@@ -1116,7 +1076,6 @@ ${SECTION_CSS}
 </head>
 <body style="--card:${bg.opacity}%" class="theme-${bg.theme || 'none'}">
 <div id="bg" aria-hidden="true"${bg.image ? ` style="background-image:url('${backgroundUrl(bg.image)}')"` : ''}></div>
-<div id="snow" aria-hidden="true">${SNOW_LAYERS.slice().reverse().map((l) => `<b class="${l.name}"></b>`).join('')}</div>
 <div id="unfocused">${icon('click')}Click to resume</div>
 <div id="offline" role="status"><span class="spin"></span>Reconnecting…</div>
 ${navbar({
