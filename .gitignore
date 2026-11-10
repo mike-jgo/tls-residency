@@ -14,3 +14,6 @@ backups/
 service-account*.json
 tls-residency-*.json
 *.before-reset-*
+
+# Rust build output
+target/

@@ -512,6 +512,9 @@ app.get('/station/events', (req, res) => {
   res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
   res.flushHeaders();
   stationClients.add(res);
+  // The web page has these in its HTML already; a native tap screen learns
+  // them here.
+  sendEvent(res, 'appearance', appearance.settings());
   sendEvent(res, 'status', stationStatus());
   req.on('close', () => stationClients.delete(res));
 });

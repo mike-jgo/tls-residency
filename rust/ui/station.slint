@@ -1,0 +1,471 @@
+// The tap screen, laid out to match the web one (/station in web/views.js).
+// Rust decides what every part says and which colours it wears; this file only
+// draws it. Buttons here never take keyboard focus: every keystroke must reach
+// the reader handler, as the web page's capture-phase listener ensures.
+
+import { ScrollView } from "std-widgets.slint";
+
+export struct Person {
+    name: string,
+    section: string, section-bg: color, section-fg: color,
+    status: string, status-bg: color, status-fg: color,
+    since: string,
+}
+
+export struct Bar { rank: string, label: string, hours: string, fraction: float, color: color }
+
+// kind: idle | in | out | bad
+export struct TapView { kind: string, big: string, name: string, detail: string, extra: string, clock-glyph: bool }
+
+global Ink {
+    out property <color> ink: #12181f;
+    out property <color> muted: #647082;
+    out property <color> line: #e3e8ee;
+    out property <color> panel: #ffffff;
+    out property <color> danger: #b42318;
+    out property <color> xmas-red: #b3261e;
+    out property <color> xmas-green: #1d6b3a;
+}
+
+// A line icon on a 24px grid, as the web page draws them.
+component Icon inherits Path {
+    in property <color> color;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    stroke: root.color;
+    stroke-width: 2px;
+    stroke-line-cap: round;
+    fill: transparent;
+    width: 18px;
+    height: 18px;
+}
+
+component Pill inherits Rectangle {
+    in property <string> text;
+    in property <color> bg;
+    in property <color> fg;
+    background: root.bg;
+    border-radius: 9px;
+    HorizontalLayout {
+        padding-left: 8px; padding-right: 8px;
+        Text { text: root.text; color: root.fg; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+    }
+}
+
+// Clickable, never focusable.
+component Btn inherits Rectangle {
+    in property <string> text;
+    in property <color> bg: #eef2f7;
+    in property <color> fg: Ink.ink;
+    in property <length> pad-x: 16px;
+    in property <length> pad-y: 9px;
+    callback clicked;
+    border-radius: 8px;
+    background: ta.has-hover ? root.bg.darker(0.04) : root.bg;
+    HorizontalLayout {
+        padding-left: root.pad-x; padding-right: root.pad-x; padding-top: root.pad-y; padding-bottom: root.pad-y;
+        Text { text: root.text; color: root.fg; font-weight: 600; vertical-alignment: center; horizontal-alignment: center; }
+    }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+component PersonRow inherits VerticalLayout {
+    in property <Person> p;
+    in property <color> rule;
+    in property <bool> last;
+    HorizontalLayout {
+        padding-top: 9px; padding-bottom: 9px; spacing: 12px;
+        HorizontalLayout {
+            spacing: 8px; horizontal-stretch: 1;
+            Text { text: p.name; color: Ink.ink; vertical-alignment: center; overflow: elide; }
+            if p.section != "": Pill { text: p.section; bg: p.section-bg; fg: p.section-fg; height: 18px; }
+            if p.status != "": Pill { text: p.status; bg: p.status-bg; fg: p.status-fg; height: 18px; }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        Text { text: p.since; color: Ink.muted; vertical-alignment: center; }
+    }
+    if !root.last: Rectangle { height: 1px; background: root.rule; }
+}
+
+component BarRow inherits HorizontalLayout {
+    in property <Bar> bar;
+    spacing: 8px;
+    padding-top: 3px; padding-bottom: 3px;
+    Text { text: bar.rank; width: 18px; color: Ink.muted; font-size: 14px; vertical-alignment: center; }
+    Text { text: bar.label; color: Ink.ink; width: 112px; font-size: 14px; overflow: elide; vertical-alignment: center; }
+    // Not a layout, so the bar can be sized against the space it is given.
+    Rectangle {
+        horizontal-stretch: 1;
+        min-height: 18px;
+        fill := Rectangle {
+            x: 0;
+            y: (parent.height - self.height) / 2;
+            height: 12px;
+            width: max(2px, (parent.width - 52px) * bar.fraction);
+            background: bar.color;
+            border-radius: 4px;
+        }
+        Text {
+            x: fill.width + 6px;
+            y: (parent.height - self.height) / 2;
+            text: bar.hours; color: Ink.ink; font-size: 13px; font-weight: 600;
+        }
+    }
+}
+
+// A wire swagging across the top of the panels, with still bulbs.
+component Lights inherits Rectangle {
+    property <int> n: max(2, round(self.width / 64px));
+    property <length> step: self.width / n;
+    property <[color]> colors: [#e53935, #43a047, #fbc02d, #1e88e5, #fb8c00];
+    for k in n: Path {
+        x: k * step;
+        y: 0;
+        width: step;
+        height: 44px;
+        viewbox-width: 100;
+        viewbox-height: 44;
+        commands: "M 0 4 Q 50 40 100 4";
+        stroke: #0b2418;
+        stroke-width: 2.5px;
+        fill: transparent;
+    }
+    for k in n: Rectangle {
+        x: k * step + step / 2 - 7px;
+        y: 25px;
+        width: 14px;
+        height: 22px;
+        border-radius: 7px;
+        background: colors[mod(k, 5)];
+        drop-shadow-blur: 10px;
+        drop-shadow-color: colors[mod(k, 5)];
+        Rectangle { x: 3px; y: -6px; width: 8px; height: 7px; border-radius: 2px; background: #2b3a30; }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "Tap screen · TLS Staffer Attendance Monitoring System";
+    preferred-width: 1280px;
+    preferred-height: 800px;
+    default-font-size: 18px;
+    background: root.christmas ? #123d2b : #f5f7fa;
+
+    // Header
+    in property <string> clock;
+    in property <bool> sync-visible;
+    in property <string> sync-label;
+    in property <string> sync-icon;
+    in property <color> sync-bg;
+    in property <color> sync-fg;
+    // Main panel
+    in property <TapView> view: { kind: "idle", big: "Connecting…", detail: "Wait for “Tap your ID” before tapping." };
+    // Side panels
+    in property <string> in-title: "ATTENDANCE UNAVAILABLE";
+    in property <[Person]> people;
+    in property <string> people-empty: "Waiting for the office computer.";
+    in property <string> board-title: "LEADERBOARD";
+    in property <bool> boards-hidden;
+    in property <[Bar]> sections;
+    in property <[Bar]> staffers;
+    in property <bool> staffers-empty;
+    // Appearance
+    in property <float> card: 1.0;
+    in property <bool> christmas;
+    in property <image> picture;
+    in property <bool> has-background;
+    // Overlays
+    in property <bool> offline;
+    in property <bool> shut-open;
+    in property <string> shut-mode; // waiting | confirm | shutting
+    in property <string> shut-title;
+    in property <string> shut-text;
+    in property <bool> shut-warn;
+    in property <string> shut-error;
+    in property <string> shut-confirm-label;
+
+    callback key(string, bool) -> bool;
+    callback sync-clicked;
+    callback open-register;
+    callback open-admin;
+    callback shut-clicked;
+    callback shut-cancel;
+    callback shut-confirm;
+
+    property <color> border: root.christmas ? #b3261e59 : Ink.line;
+    property <length> border-w: root.christmas ? 2px : 1px;
+    property <color> heading: root.christmas ? Ink.xmas-red : Ink.muted;
+    property <color> rule: root.christmas ? #1d6b3a2e : Ink.line;
+
+    function kind-bg() -> color {
+        if (root.view.kind == "in") { return #e4f6ec; }
+        if (root.view.kind == "out") { return #fbf1dc; }
+        if (root.view.kind == "bad") { return #fce8e6; }
+        return Ink.panel;
+    }
+    function kind-fg() -> color {
+        if (root.view.kind == "in") { return #137a4b; }
+        if (root.view.kind == "out") { return #8a5a00; }
+        if (root.view.kind == "bad") { return Ink.danger; }
+        return root.christmas ? Ink.xmas-green : Ink.ink;
+    }
+    function kind-border() -> color {
+        if (root.christmas) { return root.border; }
+        if (root.view.kind == "in") { return #bfe5cf; }
+        if (root.view.kind == "out") { return #efdcae; }
+        if (root.view.kind == "bad") { return #f3c5bf; }
+        return Ink.line;
+    }
+
+    if root.has-background: Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.picture;
+        image-fit: cover;
+    }
+
+    reader := FocusScope {
+        key-pressed(event) => {
+            if (root.key(event.text, event.modifiers.control || event.modifiers.alt || event.modifiers.meta)) {
+                return accept;
+            }
+            return reject;
+        }
+
+        VerticalLayout {
+            // ---- Header ----
+            Rectangle {
+                background: Ink.panel;
+                HorizontalLayout {
+                    padding-left: 28px; padding-right: 28px; padding-top: 14px; padding-bottom: 14px;
+                    spacing: 18px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Image { source: @image-url("../../web/assets/TLS_star_green.svg"); width: 32px; height: 30px; }
+                        Image { source: @image-url("../../web/assets/TLS_name_green.svg"); width: 134px; height: 20px; }
+                    }
+                    Text {
+                        text: "Staffer Attendance Monitoring System";
+                        color: Ink.muted; font-size: 15px; vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: root.clock; color: Ink.muted; vertical-alignment: center; }
+                    Text {
+                        text: "Register"; color: reg.has-hover ? #1f6feb : Ink.muted; vertical-alignment: center;
+                        reg := TouchArea { clicked => { root.open-register(); } }
+                    }
+                    Text {
+                        text: "Admin"; color: adm.has-hover ? #1f6feb : Ink.muted; vertical-alignment: center;
+                        adm := TouchArea { clicked => { root.open-admin(); } }
+                    }
+                    if root.sync-visible: Rectangle {
+                        background: root.sync-bg;
+                        border-radius: 999px;
+                        HorizontalLayout {
+                            padding-left: 14px; padding-right: 14px; padding-top: 7px; padding-bottom: 7px;
+                            spacing: 7px;
+                            Icon { commands: root.sync-icon; color: root.sync-fg; }
+                            Text { text: root.sync-label; color: root.sync-fg; font-size: 15px; font-weight: 600; vertical-alignment: center; }
+                        }
+                        TouchArea { clicked => { root.sync-clicked(); } }
+                    }
+                    Btn { text: "Shut down"; fg: Ink.danger; clicked => { root.shut-clicked(); } }
+                }
+            }
+            if root.christmas: Rectangle {
+                height: 6px;
+                clip: true;
+                property <[color]> stripe: [Ink.xmas-red, #ffffff, Ink.xmas-green, #ffffff];
+                for i in 400: Path {
+                    x: i * 10px; width: 20px; height: 6px;
+                    viewbox-width: 20; viewbox-height: 6;
+                    commands: "M 6 0 H 16 L 10 6 H 0 Z";
+                    fill: stripe[mod(i, 4)];
+                }
+            }
+            if !root.christmas: Rectangle { height: 1px; background: Ink.line; }
+
+            // ---- Panels ----
+            Rectangle {
+                vertical-stretch: 1;
+                GridLayout {
+                    padding-left: 28px; padding-right: 28px; padding-top: 24px; padding-bottom: 24px;
+                    spacing: 24px;
+
+                    // Tap result
+                    Rectangle {
+                        row: 0; col: 0; rowspan: 2;
+                        horizontal-stretch: 1;
+                        min-width: 0px;
+                        preferred-width: 0px;
+                        background: root.kind-bg().with-alpha(root.card);
+                        border-color: root.kind-border();
+                        border-width: root.border-w;
+                        border-radius: 14px;
+                        VerticalLayout {
+                            alignment: center;
+                            padding: 40px;
+                            spacing: 14px;
+                            if root.view.clock-glyph: HorizontalLayout {
+                                alignment: center;
+                                Icon {
+                                    width: 120px; height: 120px; stroke-width: 1.5px; color: Ink.muted;
+                                    commands: "M 2 12 A 10 10 0 1 0 22 12 A 10 10 0 1 0 2 12 M 12 6 v 6 l 4 2";
+                                }
+                            }
+                            Text {
+                                text: root.view.big;
+                                color: root.kind-fg();
+                                font-size: root.view.kind == "idle" ? 56px : root.view.kind == "bad" ? 64px : 88px;
+                                font-weight: 800;
+                                horizontal-alignment: center;
+                                wrap: word-wrap;
+                            }
+                            if root.view.name != "": Text {
+                                text: root.view.name; color: Ink.ink; font-size: 44px; font-weight: 700;
+                                horizontal-alignment: center; wrap: word-wrap;
+                            }
+                            if root.view.detail != "": Text {
+                                text: root.view.detail; color: Ink.ink.with-alpha(0.8); font-size: 22px;
+                                horizontal-alignment: center; wrap: word-wrap;
+                            }
+                            if root.view.extra != "": Text {
+                                text: root.view.extra; color: #8a5a00; font-size: 18px;
+                                horizontal-alignment: center; wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    // In the office
+                    Rectangle {
+                        row: 0; col: 1;
+                        horizontal-stretch: 1;
+                        min-width: 0px;
+                        preferred-width: 0px;
+                        background: Ink.panel.with-alpha(root.card);
+                        border-color: root.border;
+                        border-width: root.border-w;
+                        border-radius: 14px;
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 12px;
+                            Text { text: root.in-title; color: root.heading; font-size: 14px; font-weight: 700; letter-spacing: 0.8px; }
+                            if root.people.length == 0: Text { text: root.people-empty; color: Ink.muted; }
+                            if root.people.length > 0: ScrollView {
+                                vertical-stretch: 1;
+                                VerticalLayout {
+                                    alignment: start;
+                                    for p[i] in root.people: PersonRow { p: p; rule: root.rule; last: i == root.people.length - 1; }
+                                }
+                            }
+                            if root.people.length == 0: Rectangle { vertical-stretch: 1; }
+                        }
+                    }
+
+                    // Leaderboard
+                    Rectangle {
+                        row: 1; col: 1;
+                        horizontal-stretch: 1;
+                        min-width: 0px;
+                        preferred-width: 0px;
+                        background: Ink.panel.with-alpha(root.card);
+                        border-color: root.border;
+                        border-width: root.border-w;
+                        border-radius: 14px;
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 12px;
+                            Text { text: root.board-title; color: root.heading; font-size: 14px; font-weight: 700; letter-spacing: 0.8px; }
+                            if root.boards-hidden: VerticalLayout {
+                                alignment: center;
+                                vertical-stretch: 1;
+                                spacing: 6px;
+                                Text { text: "Results coming soon"; color: Ink.ink; font-size: 32px; font-weight: 800; horizontal-alignment: center; }
+                                Text { text: "Rankings are hidden until they’re posted."; color: Ink.muted; horizontal-alignment: center; }
+                            }
+                            if !root.boards-hidden: ScrollView {
+                                vertical-stretch: 1;
+                                HorizontalLayout {
+                                    spacing: 28px;
+                                    VerticalLayout {
+                                        alignment: start;
+                                        horizontal-stretch: 1;
+                                        Text { text: "SECTIONS"; color: Ink.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.7px; }
+                                        for b in root.sections: BarRow { bar: b; }
+                                    }
+                                    VerticalLayout {
+                                        alignment: start;
+                                        horizontal-stretch: 1;
+                                        Text { text: "TOP 10 STAFFERS"; color: Ink.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.7px; }
+                                        for b in root.staffers: BarRow { bar: b; }
+                                        if root.staffers-empty: Text { text: "No hours yet this month."; color: Ink.muted; font-size: 14px; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if root.christmas: Lights { x: 0; y: 10px; width: parent.width; height: 44px; }
+            }
+        }
+    }
+
+    // Lost the server: a toast, top centre.
+    if root.offline: Rectangle {
+        y: 14px;
+        x: (root.width - self.width) / 2;
+        width: self.preferred-width;
+        height: self.preferred-height;
+        background: Ink.danger;
+        border-radius: 999px;
+        HorizontalLayout {
+            padding-left: 20px; padding-right: 20px; padding-top: 10px; padding-bottom: 10px;
+            Text { text: "Reconnecting…"; color: #ffffff; font-weight: 600; }
+        }
+    }
+
+    // Shut down: who's still in, then confirm.
+    if root.shut-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #12181f8c;
+        TouchArea { }
+        Rectangle {
+            width: min(560px, root.width * 0.92);
+            height: min(self.preferred-height, root.height * 0.9);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: #ffffff;
+            border-radius: 14px;
+            VerticalLayout {
+                padding: 30px;
+                spacing: 12px;
+                Text { text: root.shut-title; color: Ink.ink; font-size: 26px; font-weight: 700; wrap: word-wrap; }
+                if root.shut-text != "": Text {
+                    text: root.shut-text; wrap: word-wrap;
+                    color: root.shut-warn ? Ink.danger : Ink.muted;
+                    font-weight: root.shut-warn ? 600 : 400;
+                }
+                if root.shut-mode == "confirm" && root.people.length > 0: ScrollView {
+                    min-height: min(root.people.length * 46px, 260px);
+                    VerticalLayout {
+                        alignment: start;
+                        for p[i] in root.people: PersonRow { p: p; rule: Ink.line; last: i == root.people.length - 1; }
+                    }
+                }
+                if root.shut-error != "": Text { text: root.shut-error; color: Ink.danger; font-weight: 600; wrap: word-wrap; }
+                if root.shut-mode != "shutting": HorizontalLayout {
+                    alignment: end;
+                    spacing: 12px;
+                    Btn { text: "Cancel"; border-radius: 10px; pad-x: 20px; pad-y: 12px; clicked => { root.shut-cancel(); } }
+                    if root.shut-mode == "confirm": Btn {
+                        text: root.shut-confirm-label; bg: Ink.danger; fg: #ffffff;
+                        border-radius: 10px; pad-x: 20px; pad-y: 12px;
+                        clicked => { root.shut-confirm(); }
+                    }
+                }
+            }
+        }
+    }
+
+    init => { reader.focus(); }
+}

@@ -32,11 +32,17 @@ Pi (office, monitor + keyboard + mouse)
 
 Stack: Node.js + Express + SQLite. Three dependencies, no build step.
 
+The repository has two folders:
+
+- `web/` — the system: the server, admin site, Register, the web tap screen and their tests. Everything below runs from here.
+- `rust/` — a native tap screen in Rust + Slint, in progress. It talks to the same server (`/station/events`, `/station/tap`) and would replace Chromium on the Pi, which has too little memory for it. Not deployed.
+
 ---
 
 ## Run it locally
 
 ```bash
+cd web
 npm install
 cp .env.example .env        # then edit .env — at minimum set ADMIN_PASSWORD
 npm start
@@ -205,8 +211,8 @@ refuses outright rather than handing back a file whose range isn't the one asked
 
 Raspberry Pi OS with the desktop, set to log in automatically (the default).
 
-1. `git clone` the folder onto the Pi, then `npm install`.
-2. Set a strong `ADMIN_PASSWORD` in `.env`.
+1. `git clone` the folder onto the Pi, then `npm install` in its `web/` folder.
+2. Set a strong `ADMIN_PASSWORD` in `web/.env`.
 3. **Wifi.** Connect to the office wifi from the desktop's network icon. It's saved
    and reconnects by itself at every boot. The Pi needs it each morning to set its
    clock — see *The clock* below.
@@ -230,7 +236,7 @@ Raspberry Pi OS with the desktop, set to log in automatically (the default).
 
    [Service]
    User=pi
-   WorkingDirectory=/home/pi/tls-residency
+   WorkingDirectory=/home/pi/tls-residency/web
    ExecStart=/usr/bin/node server.js
    Restart=always
    RestartSec=3
