@@ -5,9 +5,10 @@ registration, administration, SQLite, Google Sheets sync, backups and shutdown.
 It will need neither Node nor Chromium for office workflows. There will be no
 network Admin site, as requested on 2026-11-10.
 
-The existing web/ system remains the deployed reference until the complete
-replacement is verified. Nothing on the Pi changes during PC development.
-Production data and the live spreadsheet are not test fixtures.
+The office Pi switched to the native app on 2026-11-11 (see *Rollout status*).
+web/ stays as the behavioural reference and as the Pi's rollback until the open
+hardware checks below are done. Production data and the live spreadsheet are
+not test fixtures.
 
 ## Package and architecture
 
@@ -70,6 +71,27 @@ footprint and Pi hardware checks below remain separate rollout requirements.
    replacement is signed off.
 7. Cross-build arm64 and test the actual Pi display, reader, fonts and Linux
    backend at a quiet time. Arrange boot/service switchover together afterward.
+
+## Rollout status
+
+Switched over on the office Pi on 2026-11-11 at about 20:20, at the owner's
+request, with 16 people checked in. Done at the switch:
+
+- Merged to master as `4e43350`; the Pi runs that commit's CI desktop build
+  (checksum-verified against the artifact).
+- Node had no unsynced taps. Its database was copied with SQLite's backup API
+  (integrity ok, 119 people, 878 taps) into a separate native installation.
+- First run with sync off showed the same 16 people, leaderboard and appearance.
+  With sync on, the badge showed Synced. Same kernel boot ID, so open sessions
+  carried over.
+- Starts at login, restarts on exit, `winit-femtovg` backend. Poweroff rule present.
+- Idle footprint: 93 MB and 0.15% CPU, against ~375 MB and 8.9% for Node + Chromium.
+
+Still open on the Pi: a production card tap and reader timing, Register/Admin/
+Hours/backup-restore on the real screen, pressing Shut down, a cold boot and
+RTC/NTP readiness, Linux startup/shutdown backups, the twenty-input load
+measurement, and comparing `winit-femtovg` against `winit-software`/KMS. Rollback
+steps are in [rust/README.md](rust/README.md#on-the-office-pi).
 
 ## UI basis
 

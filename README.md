@@ -5,15 +5,17 @@ SQLite, Google Sheets sync, backups, images, fonts and the complete office inter
 are handled by Rust. The native app does not start Node, open Chromium or expose
 an HTTP/Admin service on the office network.
 
-- `rust/`: the standalone replacement, currently being verified on Windows.
-- `web/`: the existing deployed Node implementation and its reference tests.
-  Its previous documentation is preserved in [web/README.md](web/README.md).
+- `rust/`: the standalone app. It has run the office Pi since 2026-11-11.
+- `web/`: the previous Node implementation and its reference tests. It stays
+  installed on the Pi, switched off, as the rollback. Its documentation is
+  preserved in [web/README.md](web/README.md).
 - [PLAN.md](PLAN.md): migration scope and verification checklist.
 - [rust/README.md](rust/README.md): build, configuration, import and recovery.
 
-The deployed Pi service has not been replaced. A Windows preview has been run
-with live Google Sheets sync using a separate local database. Keep the deployed
-service until the native package is tested with the Pi's display, reader and Linux session.
+The office Pi (a Raspberry Pi 3) runs the CI-built arm64 package from
+`~/tls-residency-native`, started at login. Installing, updating and rolling back
+are in [rust/README.md § On the office Pi](rust/README.md#on-the-office-pi).
+Some Pi hardware checks are still open; see [PLAN.md](PLAN.md#rollout-status).
 
 ## Build and run
 

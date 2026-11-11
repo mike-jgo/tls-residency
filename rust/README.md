@@ -67,8 +67,80 @@ Sheets; no remote control interface is provided. Keep the `.env` and key private
    authoritative. A startup backup is attempted before reconciliation. Check the
    System screen and log for backup or sync errors before proceeding.
 
-The Pi service has not been switched over. A separate Windows preview has been
-run with the existing live Sheets configuration.
+The office Pi was imported this way on 2026-11-11; see *On the office Pi* below.
+
+## On the office Pi
+
+Since 2026-11-11 the office Pi (Raspberry Pi 3, 905 MB RAM, Raspberry Pi OS
+with the labwc desktop) runs this app instead of the Node service and Chromium.
+
+**Layout.** Everything is in `~/tls-residency-native/`:
+
+| Path | What it is |
+|---|---|
+| `tls-residency` | The arm64 desktop build from CI (the *Pi build* workflow) |
+| `.env` | Settings (mode 600). `STATION_FULLSCREEN=1`; data paths under `data/` |
+| `run.sh` | Launcher: restarts the app if it exits, refuses to start a second copy |
+| `data/residency.db` | The database. Only this app may open it |
+| `data/service-account.json` | Sheets key (mode 600) |
+| `data/background.img` | Tap screen background |
+| `data/backups/` | Startup, manual and shutdown backups |
+| `data/residency.log`, `data/run.log` | App log; launcher log with exit codes |
+
+`~/.config/autostart/residency-native.desktop` runs `run.sh` at login, in the
+desktop session. `run.sh` sets `SLINT_BACKEND=winit-femtovg` (GPU); set
+`SLINT_BACKEND=winit-software` in its environment if drawing ever misbehaves.
+The Shut down button uses the existing `tlsadmin` sudoers rule for
+`/usr/bin/systemctl poweroff`.
+
+Measured at the switch, both idle on the tap screen with the same data:
+
+| | Node + Chromium | Native |
+|---|---|---|
+| Memory (PSS) | ~375 MB | 93 MB |
+| CPU, 60 s idle sample | 8.9% of one core | 0.15% of one core |
+| Pi memory available | 367 MB | 494 MB |
+
+**Updating.** Build on CI rather than on the Pi. Swap the binary when nobody is
+checked in or at a quiet time; the database and settings stay as they are.
+The *Pi build* workflow runs on pushes that change `rust/` (or by hand with
+`gh workflow run "Pi build"`); `gh run list --workflow "Pi build"` gives the run
+ID for the commit you want.
+
+```bash
+gh run download <run-id> -n tls-residency-linux-arm64-desktop -D pi-build
+tar -xzf pi-build/tls-residency-linux-arm64-desktop.tar.gz -C pi-build
+scp pi-build/tls-residency-linux-arm64-desktop/tls-residency tlsadmin@tls-pi:tls-residency-native/tls-residency.new
+```
+
+Then on the Pi:
+
+```bash
+cd ~/tls-residency-native && kill "$(cat data/run.pid)"; pkill -x tls-residency; mv tls-residency.new tls-residency
+```
+
+```bash
+cd ~/tls-residency-native && XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 setsid nohup ./run.sh >/dev/null 2>&1 < /dev/null &
+```
+
+(Logging out and back in, or rebooting, also starts it. A reboot ends everyone's
+open session, so only reboot when nobody is checked in.)
+
+**Rolling back to Node.** The old installation is untouched in `~/tls-residency`
+at commit `d95e968`. Do not `git pull` there: master keeps Node in `web/`, and
+the old service runs `node server.js` from the folder's top level.
+
+```bash
+kill "$(cat ~/tls-residency-native/data/run.pid)"; pkill -x tls-residency; mv ~/.config/autostart/residency-native.desktop ~/.config/autostart/residency-native.desktop.disabled
+```
+
+```bash
+mv ~/.config/autostart/residency-station.desktop.node-disabled ~/.config/autostart/residency-station.desktop && sudo systemctl enable --now attendance.service
+```
+
+Log out and in (or reboot) to open the Chromium kiosk. The old database stops at
+the switch: taps recorded since then are in the native database and the Sheet,
+not in Node's. Check People and Hours after rolling back.
 
 ## Native controls
 

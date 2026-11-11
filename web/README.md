@@ -1,5 +1,11 @@
 # TLS Staffer Attendance Monitoring System
 
+> **Not what the office Pi runs any more.** Since 2026-11-11 the Pi runs the
+> native app in [../rust](../rust/README.md#on-the-office-pi). This Node version
+> is kept installed there, switched off, as the rollback (its service is named
+> `attendance.service` on the Pi, not `residency` as below), and as the reference
+> tests. The guide below describes it as it was deployed.
+
 RFID residency-hours tracker for a school media organization. A USB RFID reader
 plugs into a Raspberry Pi in the office, with a monitor, keyboard and mouse. The Pi
 runs everything — the reader, the database, the tap screen and the admin site. One

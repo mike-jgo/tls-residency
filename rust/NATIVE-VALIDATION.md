@@ -59,8 +59,8 @@ The final QA process was closed after verification.
 
 These Windows checks do not validate an arm64 executable, the Pi's graphics
 backend/display, physical reader timing, real RTC/NTP behavior or Linux poweroff.
-Those still require the hardware checks in [../PLAN.md](../PLAN.md) before service
-switchover. Remote browser administration and HTTP/cookie protections are outside
+Those still require the hardware checks in [../PLAN.md](../PLAN.md). The Pi was
+switched over on 2026-11-11 with some of them still open; see its *Rollout status*. Remote browser administration and HTTP/cookie protections are outside
 the standalone design intentionally.
 
 The earlier tap-only client's memory figures in [VALIDATION.md](VALIDATION.md)
