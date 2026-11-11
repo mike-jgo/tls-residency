@@ -1,9 +1,8 @@
-// The tap screen, laid out to match the web one (/station in web/views.js).
-// Rust decides what every part says and which colours it wears; this file only
-// draws it. Buttons here never take keyboard focus: every keystroke must reach
-// the reader handler, as the web page's capture-phase listener ensures.
+import { ScrollView, Button, Palette } from "std-widgets.slint";
 
-import { ScrollView } from "std-widgets.slint";
+import "../assets/SchibstedGrotesk.ttf";
+import { AdminView, NavLink } from "admin.slint";
+export { Admin, PersonRow, HourRow, InRow, CardRow, LinkRow } from "admin.slint";
 
 export struct Person {
     name: string,
@@ -48,25 +47,8 @@ component Pill inherits Rectangle {
     border-radius: 9px;
     HorizontalLayout {
         padding-left: 8px; padding-right: 8px;
-        Text { text: root.text; color: root.fg; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+        Text { text: root.text; color: root.fg; font-size: 13px; font-weight: 600; vertical-alignment: center; }
     }
-}
-
-// Clickable, never focusable.
-component Btn inherits Rectangle {
-    in property <string> text;
-    in property <color> bg: #eef2f7;
-    in property <color> fg: Ink.ink;
-    in property <length> pad-x: 16px;
-    in property <length> pad-y: 9px;
-    callback clicked;
-    border-radius: 8px;
-    background: ta.has-hover ? root.bg.darker(0.04) : root.bg;
-    HorizontalLayout {
-        padding-left: root.pad-x; padding-right: root.pad-x; padding-top: root.pad-y; padding-bottom: root.pad-y;
-        Text { text: root.text; color: root.fg; font-weight: 600; vertical-alignment: center; horizontal-alignment: center; }
-    }
-    ta := TouchArea { clicked => { root.clicked(); } }
 }
 
 component PersonRow inherits VerticalLayout {
@@ -78,8 +60,8 @@ component PersonRow inherits VerticalLayout {
         HorizontalLayout {
             spacing: 8px; horizontal-stretch: 1;
             Text { text: p.name; color: Ink.ink; vertical-alignment: center; overflow: elide; }
-            if p.section != "": Pill { text: p.section; bg: p.section-bg; fg: p.section-fg; height: 18px; }
-            if p.status != "": Pill { text: p.status; bg: p.status-bg; fg: p.status-fg; height: 18px; }
+            if p.section != "": Pill { text: p.section; bg: p.section-bg; fg: p.section-fg; height: 24px; }
+            if p.status != "": Pill { text: p.status; bg: p.status-bg; fg: p.status-fg; height: 24px; }
             Rectangle { horizontal-stretch: 1; }
         }
         Text { text: p.since; color: Ink.muted; vertical-alignment: center; }
@@ -92,18 +74,18 @@ component BarRow inherits HorizontalLayout {
     spacing: 8px;
     padding-top: 3px; padding-bottom: 3px;
     Text { text: bar.rank; width: 18px; color: Ink.muted; font-size: 14px; vertical-alignment: center; }
-    Text { text: bar.label; color: Ink.ink; width: 112px; font-size: 14px; overflow: elide; vertical-alignment: center; }
-    // Not a layout, so the bar can be sized against the space it is given.
+    Text { text: bar.label; width: 112px; color: Ink.ink; font-size: 14px; overflow: elide; vertical-alignment: center; }
     Rectangle {
         horizontal-stretch: 1;
+        min-width: 0px; preferred-width: 0px;
         min-height: 18px;
         fill := Rectangle {
-            x: 0;
+            x: 0px;
             y: (parent.height - self.height) / 2;
-            height: 12px;
             width: max(2px, (parent.width - 52px) * bar.fraction);
+            height: 12px;
             background: bar.color;
-            border-radius: 4px;
+            border-top-right-radius: 4px; border-bottom-right-radius: 4px;
         }
         Text {
             x: fill.width + 6px;
@@ -113,38 +95,17 @@ component BarRow inherits HorizontalLayout {
     }
 }
 
-// A wire swagging across the top of the panels, with still bulbs.
-component Lights inherits Rectangle {
-    property <int> n: max(2, round(self.width / 64px));
-    property <length> step: self.width / n;
-    property <[color]> colors: [#e53935, #43a047, #fbc02d, #1e88e5, #fb8c00];
-    for k in n: Path {
-        x: k * step;
-        y: 0;
-        width: step;
-        height: 44px;
-        viewbox-width: 100;
-        viewbox-height: 44;
-        commands: "M 0 4 Q 50 40 100 4";
-        stroke: #0b2418;
-        stroke-width: 2.5px;
-        fill: transparent;
-    }
-    for k in n: Rectangle {
-        x: k * step + step / 2 - 7px;
-        y: 25px;
-        width: 14px;
-        height: 22px;
-        border-radius: 7px;
-        background: colors[mod(k, 5)];
-        drop-shadow-blur: 10px;
-        drop-shadow-color: colors[mod(k, 5)];
-        Rectangle { x: 3px; y: -6px; width: 8px; height: 7px; border-radius: 2px; background: #2b3a30; }
-    }
+// Static decoration uses one repeated image per strip, with baked-in glows.
+component Lights inherits Image {
+    source: @image-url("../assets/christmas-lights.svg");
+    image-fit: contain;
+    horizontal-tiling: repeat;
 }
 
 export component AppWindow inherits Window {
-    title: "Tap screen · TLS Staffer Attendance Monitoring System";
+    title: root.managing ? "TLS Residency · Admin" : "TLS Residency · Tap screen";
+    default-font-family: "Schibsted Grotesk";
+    min-width: 1000px; min-height: 660px;
     preferred-width: 1280px;
     preferred-height: 800px;
     default-font-size: 18px;
@@ -158,7 +119,7 @@ export component AppWindow inherits Window {
     in property <color> sync-bg;
     in property <color> sync-fg;
     // Main panel
-    in property <TapView> view: { kind: "idle", big: "Connecting…", detail: "Wait for “Tap your ID” before tapping." };
+    in property <TapView> view: { kind: "idle", big: "Starting…", detail: "Opening attendance data…" };
     // Side panels
     in property <string> in-title: "ATTENDANCE UNAVAILABLE";
     in property <[Person]> people;
@@ -174,7 +135,6 @@ export component AppWindow inherits Window {
     in property <image> picture;
     in property <bool> has-background;
     // Overlays
-    in property <bool> offline;
     in property <bool> shut-open;
     in property <string> shut-mode; // waiting | confirm | shutting
     in property <string> shut-title;
@@ -216,20 +176,23 @@ export component AppWindow inherits Window {
         return Ink.line;
     }
 
-    if root.has-background: Image {
-        width: parent.width;
-        height: parent.height;
-        source: root.picture;
-        image-fit: cover;
-    }
-
+    // Register and Admin are drawn over the tap screen, in this same window.
+    in-out property <bool> managing;
+    public function focus-admin() { admin-view.focus-start(); }
+    public function focus-reader() { reader.focus(); }
+    changed shut-open => { if (!root.shut-open) { reader.focus(); } }
     reader := FocusScope {
-        key-pressed(event) => {
-            if (root.key(event.text, event.modifiers.control || event.modifiers.alt || event.modifiers.meta)) {
-                return accept;
-            }
+        visible: !root.managing;
+        capture-key-pressed(event) => {
+            if (event.text == Key.Escape && root.shut-open) { root.shut-cancel(); return accept; }
+            if (root.key(event.text, event.modifiers.control || event.modifiers.alt || event.modifiers.meta)) { return accept; }
             return reject;
         }
+    TouchArea { mouse-cursor: none; }
+    if root.has-background: Image {
+        width: parent.width; height: parent.height;
+        source: root.picture; image-fit: cover;
+    }
 
         VerticalLayout {
             // ---- Header ----
@@ -240,62 +203,57 @@ export component AppWindow inherits Window {
                     spacing: 18px;
                     HorizontalLayout {
                         spacing: 8px;
-                        Image { source: @image-url("../../web/assets/TLS_star_green.svg"); width: 32px; height: 30px; }
-                        Image { source: @image-url("../../web/assets/TLS_name_green.svg"); width: 134px; height: 20px; }
-                    }
-                    Text {
-                        text: "Staffer Attendance Monitoring System";
-                        color: Ink.muted; font-size: 15px; vertical-alignment: center;
+                        VerticalLayout { alignment: center; Image { source: @image-url("../assets/TLS_star_green.svg"); width: 32px; height: 30px; } }
+                        VerticalLayout { alignment: center; Image { source: @image-url("../assets/TLS_name_green.svg"); width: 134px; height: 20px; } }
                     }
                     Rectangle { horizontal-stretch: 1; }
                     Text { text: root.clock; color: Ink.muted; vertical-alignment: center; }
-                    Text {
-                        text: "Register"; color: reg.has-hover ? #1f6feb : Ink.muted; vertical-alignment: center;
-                        reg := TouchArea { clicked => { root.open-register(); } }
-                    }
-                    Text {
-                        text: "Admin"; color: adm.has-hover ? #1f6feb : Ink.muted; vertical-alignment: center;
-                        adm := TouchArea { clicked => { root.open-admin(); } }
-                    }
+                    // Reader capture consumes scanner Enter before focused controls.
+                    NavLink { min-width: 88px; text: "Register"; enabled: !root.shut-open; clicked => { root.open-register(); } }
+                    NavLink { min-width: 88px; text: "Admin"; enabled: !root.shut-open; clicked => { root.open-admin(); } }
                     if root.sync-visible: Rectangle {
+                        horizontal-stretch: 0;
                         background: root.sync-bg;
                         border-radius: 999px;
                         HorizontalLayout {
                             padding-left: 14px; padding-right: 14px; padding-top: 7px; padding-bottom: 7px;
                             spacing: 7px;
-                            Icon { commands: root.sync-icon; color: root.sync-fg; }
+                            VerticalLayout { alignment: center; Image {
+                                width: 18px; height: 18px;
+                                colorize: root.sync-fg;
+                                source: root.sync-icon == "synced" ? @image-url("../assets/icons/synced.svg")
+                                    : root.sync-icon == "pending" ? @image-url("../assets/icons/pending.svg")
+                                    : root.sync-icon == "offline" ? @image-url("../assets/icons/offline.svg")
+                                    : root.sync-icon == "error" ? @image-url("../assets/icons/error.svg")
+                                    : @image-url("../assets/icons/off.svg");
+                            } }
                             Text { text: root.sync-label; color: root.sync-fg; font-size: 15px; font-weight: 600; vertical-alignment: center; }
                         }
                         TouchArea { clicked => { root.sync-clicked(); } }
                     }
-                    Btn { text: "Shut down"; fg: Ink.danger; clicked => { root.shut-clicked(); } }
+                    Button { text: "Shut down"; enabled: !root.shut-open; min-height: 44px; clicked => { root.shut-clicked(); } }
                 }
             }
-            if root.christmas: Rectangle {
+            if root.christmas: Image {
                 height: 6px;
-                clip: true;
-                property <[color]> stripe: [Ink.xmas-red, #ffffff, Ink.xmas-green, #ffffff];
-                for i in 400: Path {
-                    x: i * 10px; width: 20px; height: 6px;
-                    viewbox-width: 20; viewbox-height: 6;
-                    commands: "M 6 0 H 16 L 10 6 H 0 Z";
-                    fill: stripe[mod(i, 4)];
-                }
+                source: @image-url("../assets/christmas-stripe.svg");
+                image-fit: contain;
+                horizontal-tiling: repeat;
             }
             if !root.christmas: Rectangle { height: 1px; background: Ink.line; }
 
             // ---- Panels ----
             Rectangle {
                 vertical-stretch: 1;
-                GridLayout {
+                HorizontalLayout {
                     padding-left: 28px; padding-right: 28px; padding-top: 24px; padding-bottom: 24px;
                     spacing: 24px;
 
                     // Tap result
                     Rectangle {
-                        row: 0; col: 0; rowspan: 2;
-                        horizontal-stretch: 1;
+                        horizontal-stretch: 2;
                         min-width: 0px;
+                        min-height: 0px;
                         preferred-width: 0px;
                         background: root.kind-bg().with-alpha(root.card);
                         border-color: root.kind-border();
@@ -335,66 +293,74 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    // In the office
-                    Rectangle {
-                        row: 0; col: 1;
-                        horizontal-stretch: 1;
-                        min-width: 0px;
-                        preferred-width: 0px;
-                        background: Ink.panel.with-alpha(root.card);
-                        border-color: root.border;
-                        border-width: root.border-w;
-                        border-radius: 14px;
-                        VerticalLayout {
-                            padding: 20px;
-                            spacing: 12px;
-                            Text { text: root.in-title; color: root.heading; font-size: 14px; font-weight: 700; letter-spacing: 0.8px; }
-                            if root.people.length == 0: Text { text: root.people-empty; color: Ink.muted; }
-                            if root.people.length > 0: ScrollView {
-                                vertical-stretch: 1;
-                                VerticalLayout {
-                                    alignment: start;
-                                    for p[i] in root.people: PersonRow { p: p; rule: root.rule; last: i == root.people.length - 1; }
-                                }
-                            }
-                            if root.people.length == 0: Rectangle { vertical-stretch: 1; }
-                        }
-                    }
-
-                    // Leaderboard
-                    Rectangle {
-                        row: 1; col: 1;
-                        horizontal-stretch: 1;
-                        min-width: 0px;
-                        preferred-width: 0px;
-                        background: Ink.panel.with-alpha(root.card);
-                        border-color: root.border;
-                        border-width: root.border-w;
-                        border-radius: 14px;
-                        VerticalLayout {
-                            padding: 20px;
-                            spacing: 12px;
-                            Text { text: root.board-title; color: root.heading; font-size: 14px; font-weight: 700; letter-spacing: 0.8px; }
-                            if root.boards-hidden: VerticalLayout {
-                                alignment: center;
-                                vertical-stretch: 1;
-                                spacing: 6px;
-                                Text { text: "Results coming soon"; color: Ink.ink; font-size: 32px; font-weight: 800; horizontal-alignment: center; }
-                                Text { text: "Rankings are hidden until they’re posted."; color: Ink.muted; horizontal-alignment: center; }
-                            }
-                            if !root.boards-hidden: ScrollView {
-                                vertical-stretch: 1;
-                                HorizontalLayout {
-                                    spacing: 28px;
+                    VerticalLayout {
+                        horizontal-stretch: 3;
+                        min-height: 0px;
+                        min-width: 0px; preferred-width: 0px;
+                        spacing: 24px;
+                        // In the office
+                        Rectangle {
+                            min-width: 0px;
+                            min-height: 0px;
+                            preferred-width: 0px;
+                            vertical-stretch: 1;
+                            preferred-height: 0px;
+                            background: Ink.panel.with-alpha(root.card);
+                            border-color: root.border;
+                            border-width: root.border-w;
+                            border-radius: 14px;
+                            VerticalLayout {
+                                padding: 20px;
+                                spacing: 12px;
+                                Text { text: root.in-title; color: root.heading; font-size: 14px; font-weight: 700; letter-spacing: 0.8px; }
+                                if root.people.length == 0: Text { text: root.people-empty; color: Ink.muted; }
+                                if root.people.length > 0: ScrollView {
+                                    vertical-stretch: 1;
                                     VerticalLayout {
                                         alignment: start;
+                                        for p[i] in root.people: PersonRow { p: p; rule: root.rule; last: i == root.people.length - 1; }
+                                    }
+                                }
+                                if root.people.length == 0: Rectangle { vertical-stretch: 1; }
+                            }
+                        }
+
+                        // Leaderboard
+                        leaderboard := Rectangle {
+                            min-width: 0px;
+                            min-height: 0px;
+                            preferred-width: 0px;
+                            vertical-stretch: 0;
+                            background: Ink.panel.with-alpha(root.card);
+                            border-color: root.border;
+                            border-width: root.border-w;
+                            border-radius: 14px;
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 8px;
+                                Text { text: root.board-title; color: root.heading; font-size: 14px; font-weight: 700; letter-spacing: 0.8px; }
+                                if root.boards-hidden: VerticalLayout {
+                                    alignment: center;
+                                    vertical-stretch: 1;
+                                    spacing: 6px;
+                                    Text { text: "Results coming soon"; color: Ink.ink; font-size: 32px; font-weight: 800; horizontal-alignment: center; }
+                                    Text { text: "Rankings are hidden until they’re posted."; color: Ink.muted; horizontal-alignment: center; }
+                                }
+                                if !root.boards-hidden: HorizontalLayout {
+                                    spacing: 16px;
+                                    VerticalLayout {
+                                        alignment: start;
+                                        vertical-stretch: 1;
                                         horizontal-stretch: 1;
+                                        min-width: 0px; preferred-width: 0px;
                                         Text { text: "SECTIONS"; color: Ink.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.7px; }
                                         for b in root.sections: BarRow { bar: b; }
                                     }
                                     VerticalLayout {
                                         alignment: start;
+                                        vertical-stretch: 1;
                                         horizontal-stretch: 1;
+                                        min-width: 0px; preferred-width: 0px;
                                         Text { text: "TOP 10 STAFFERS"; color: Ink.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.7px; }
                                         for b in root.staffers: BarRow { bar: b; }
                                         if root.staffers-empty: Text { text: "No hours yet this month."; color: Ink.muted; font-size: 14px; }
@@ -404,30 +370,30 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                if root.christmas: Lights { x: 0; y: 10px; width: parent.width; height: 44px; }
+                if root.christmas: Lights { x: 0; y: 0px; width: parent.width; height: 44px; }
             }
         }
-    }
-
-    // Lost the server: a toast, top centre.
-    if root.offline: Rectangle {
-        y: 14px;
-        x: (root.width - self.width) / 2;
-        width: self.preferred-width;
-        height: self.preferred-height;
-        background: Ink.danger;
-        border-radius: 999px;
-        HorizontalLayout {
-            padding-left: 20px; padding-right: 20px; padding-top: 10px; padding-bottom: 10px;
-            Text { text: "Reconnecting…"; color: #ffffff; font-weight: 600; }
-        }
-    }
 
     // Shut down: who's still in, then confirm.
     if root.shut-open: Rectangle {
         width: root.width;
         height: root.height;
         background: #12181f8c;
+        modal-keys := FocusScope {
+        property <bool> confirm-focused;
+        capture-key-pressed(event) => {
+            if (event.text == Key.Tab && root.shut-mode != "shutting") {
+                if (root.shut-mode == "confirm" && !self.confirm-focused) {
+                    confirm-focus.focus();
+                    self.confirm-focused = true;
+                } else {
+                    cancel-focus.focus();
+                    self.confirm-focused = false;
+                }
+                return accept;
+            }
+            return reject;
+        }
         TouchArea { }
         Rectangle {
             width: min(560px, root.width * 0.92);
@@ -453,19 +419,23 @@ export component AppWindow inherits Window {
                     }
                 }
                 if root.shut-error != "": Text { text: root.shut-error; color: Ink.danger; font-weight: 600; wrap: word-wrap; }
-                if root.shut-mode != "shutting": HorizontalLayout {
+                HorizontalLayout {
+                    visible: root.shut-mode != "shutting";
                     alignment: end;
                     spacing: 12px;
-                    Btn { text: "Cancel"; border-radius: 10px; pad-x: 20px; pad-y: 12px; clicked => { root.shut-cancel(); } }
-                    if root.shut-mode == "confirm": Btn {
-                        text: root.shut-confirm-label; bg: Ink.danger; fg: #ffffff;
-                        border-radius: 10px; pad-x: 20px; pad-y: 12px;
+                    cancel-focus := Button { init => { self.focus(); } text: "Cancel"; min-height: 44px; clicked => { root.shut-cancel(); } }
+                    confirm-focus := Button {
+                        visible: root.shut-mode == "confirm";
+                        text: root.shut-confirm-label; min-height: 44px;
                         clicked => { root.shut-confirm(); }
                     }
                 }
             }
         }
+        }
     }
 
-    init => { reader.focus(); }
+    }
+    admin-view := AdminView { x: 0; y: 0; width: root.width; height: root.height; visible: root.managing; }
+    init => { Palette.color-scheme = ColorScheme.light; reader.focus(); }
 }

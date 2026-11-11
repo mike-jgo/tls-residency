@@ -1,0 +1,452 @@
+{
+  "search": {
+    "frozen": 4,
+    "merges": [
+      {
+        "rows": [
+          0,
+          1
+        ],
+        "columns": [
+          1,
+          4
+        ]
+      }
+    ],
+    "cells": [
+      {
+        "format": {
+          "padding": {
+            "top": 4,
+            "right": 10,
+            "bottom": 4,
+            "left": 10
+          }
+        }
+      },
+      {
+        "rows": [
+          0,
+          1
+        ],
+        "columns": [
+          0,
+          1
+        ],
+        "format": {
+          "textFormat": {
+            "bold": true,
+            "fontSize": 12
+          },
+          "horizontalAlignment": "RIGHT",
+          "verticalAlignment": "MIDDLE"
+        }
+      },
+      {
+        "rows": [
+          0,
+          1
+        ],
+        "columns": [
+          1,
+          4
+        ],
+        "format": {
+          "backgroundColor": {
+            "red": 0.8941176470588236,
+            "green": 0.9647058823529412,
+            "blue": 0.9254901960784314
+          },
+          "textFormat": {
+            "bold": true,
+            "fontSize": 14
+          },
+          "verticalAlignment": "MIDDLE",
+          "borders": {
+            "top": {
+              "style": "SOLID_MEDIUM",
+              "color": {
+                "red": 0.0196078431372549,
+                "green": 0.2823529411764706,
+                "blue": 0.0196078431372549
+              }
+            },
+            "bottom": {
+              "style": "SOLID_MEDIUM",
+              "color": {
+                "red": 0.0196078431372549,
+                "green": 0.2823529411764706,
+                "blue": 0.0196078431372549
+              }
+            },
+            "left": {
+              "style": "SOLID_MEDIUM",
+              "color": {
+                "red": 0.0196078431372549,
+                "green": 0.2823529411764706,
+                "blue": 0.0196078431372549
+              }
+            },
+            "right": {
+              "style": "SOLID_MEDIUM",
+              "color": {
+                "red": 0.0196078431372549,
+                "green": 0.2823529411764706,
+                "blue": 0.0196078431372549
+              }
+            }
+          }
+        }
+      },
+      {
+        "rows": [
+          0,
+          1
+        ],
+        "columns": [
+          4,
+          5
+        ],
+        "format": {
+          "textFormat": {
+            "italic": true,
+            "foregroundColor": {
+              "red": 0.39215686274509803,
+              "green": 0.4392156862745098,
+              "blue": 0.5098039215686274
+            }
+          },
+          "verticalAlignment": "MIDDLE"
+        }
+      },
+      {
+        "rows": [
+          2,
+          3
+        ],
+        "columns": [
+          0,
+          24
+        ],
+        "format": {
+          "textFormat": {
+            "bold": true,
+            "fontSize": 12,
+            "foregroundColor": {
+              "red": 0.0196078431372549,
+              "green": 0.2823529411764706,
+              "blue": 0.0196078431372549
+            }
+          }
+        }
+      },
+      {
+        "rows": [
+          3,
+          4
+        ],
+        "columns": [
+          0,
+          8
+        ],
+        "format": {
+          "backgroundColor": {
+            "red": 0.0196078431372549,
+            "green": 0.2823529411764706,
+            "blue": 0.0196078431372549
+          },
+          "textFormat": {
+            "bold": true,
+            "foregroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            }
+          }
+        }
+      },
+      {
+        "rows": [
+          3,
+          4
+        ],
+        "columns": [
+          9,
+          15
+        ],
+        "format": {
+          "backgroundColor": {
+            "red": 0.0196078431372549,
+            "green": 0.2823529411764706,
+            "blue": 0.0196078431372549
+          },
+          "textFormat": {
+            "bold": true,
+            "foregroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            }
+          }
+        }
+      },
+      {
+        "rows": [
+          3,
+          4
+        ],
+        "columns": [
+          16,
+          22
+        ],
+        "format": {
+          "backgroundColor": {
+            "red": 0.0196078431372549,
+            "green": 0.2823529411764706,
+            "blue": 0.0196078431372549
+          },
+          "textFormat": {
+            "bold": true,
+            "foregroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            }
+          }
+        }
+      }
+    ],
+    "heights": [
+      {
+        "rows": [
+          0,
+          1
+        ],
+        "pixels": 36
+      }
+    ],
+    "widths": [
+      {
+        "columns": [
+          0,
+          24
+        ],
+        "pixels": 110
+      },
+      {
+        "columns": [
+          0,
+          1
+        ],
+        "pixels": 210
+      },
+      {
+        "columns": [
+          1,
+          2
+        ],
+        "pixels": 200
+      },
+      {
+        "columns": [
+          9,
+          10
+        ],
+        "pixels": 200
+      },
+      {
+        "columns": [
+          19,
+          20
+        ],
+        "pixels": 200
+      },
+      {
+        "columns": [
+          8,
+          9
+        ],
+        "pixels": 30
+      },
+      {
+        "columns": [
+          15,
+          16
+        ],
+        "pixels": 30
+      }
+    ]
+  },
+  "staffers": {
+    "frozen": 1,
+    "cells": [
+      {
+        "format": {
+          "padding": {
+            "top": 4,
+            "right": 10,
+            "bottom": 4,
+            "left": 10
+          }
+        }
+      },
+      {
+        "rows": [
+          0,
+          1
+        ],
+        "columns": [
+          0,
+          7
+        ],
+        "format": {
+          "backgroundColor": {
+            "red": 0.0196078431372549,
+            "green": 0.2823529411764706,
+            "blue": 0.0196078431372549
+          },
+          "textFormat": {
+            "bold": true,
+            "foregroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            }
+          }
+        }
+      }
+    ]
+  },
+  "totals": {
+    "cells": [
+      {
+        "format": {
+          "padding": {
+            "top": 4,
+            "right": 10,
+            "bottom": 4,
+            "left": 10
+          }
+        }
+      },
+      {
+        "rows": [
+          0,
+          2
+        ],
+        "columns": [
+          0,
+          1
+        ],
+        "format": {
+          "textFormat": {
+            "bold": true
+          }
+        }
+      },
+      {
+        "rows": [
+          2,
+          3
+        ],
+        "columns": [
+          0,
+          7
+        ],
+        "format": {
+          "backgroundColor": {
+            "red": 0.0196078431372549,
+            "green": 0.2823529411764706,
+            "blue": 0.0196078431372549
+          },
+          "textFormat": {
+            "bold": true,
+            "foregroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            }
+          }
+        }
+      }
+    ]
+  },
+  "month": {
+    "cells": [
+      {
+        "format": {
+          "padding": {
+            "top": 4,
+            "right": 10,
+            "bottom": 4,
+            "left": 10
+          }
+        }
+      },
+      {
+        "rows": [
+          0,
+          1
+        ],
+        "columns": [
+          0,
+          7
+        ],
+        "format": {
+          "backgroundColor": {
+            "red": 0.0196078431372549,
+            "green": 0.2823529411764706,
+            "blue": 0.0196078431372549
+          },
+          "textFormat": {
+            "bold": true,
+            "foregroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            }
+          }
+        }
+      }
+    ]
+  },
+  "logs": {
+    "cells": [
+      {
+        "format": {
+          "padding": {
+            "top": 4,
+            "right": 10,
+            "bottom": 4,
+            "left": 10
+          }
+        }
+      },
+      {
+        "rows": [
+          0,
+          1
+        ],
+        "columns": [
+          0,
+          6
+        ],
+        "format": {
+          "backgroundColor": {
+            "red": 0.0196078431372549,
+            "green": 0.2823529411764706,
+            "blue": 0.0196078431372549
+          },
+          "textFormat": {
+            "bold": true,
+            "foregroundColor": {
+              "red": 1,
+              "green": 1,
+              "blue": 1
+            }
+          }
+        }
+      }
+    ]
+  }
+}

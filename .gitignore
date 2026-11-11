@@ -17,3 +17,7 @@ tls-residency-*.json
 
 # Rust build output
 target/
+
+# Native runtime files
+/rust/data/
+/data/

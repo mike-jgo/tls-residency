@@ -1,148 +1,85 @@
-# Plan: a native tap screen for the Pi 3
+# Plan: one native Rust attendance app
 
-## Why
+The office computer will run one Rust + Slint package for the tap screen,
+registration, administration, SQLite, Google Sheets sync, backups and shutdown.
+It will need neither Node nor Chromium for office workflows. There will be no
+network Admin site, as requested on 2026-11-10.
 
-The office Pi is a Raspberry Pi 3 Model B with 1 GB of RAM. Its graphics chip only
-does OpenGL ES 2.0, and Chromium needs ES 3.0, so Chromium draws the tap screen in
-software. Two things follow:
+The existing web/ system remains the deployed reference until the complete
+replacement is verified. Nothing on the Pi changes during PC development.
+Production data and the live spreadsheet are not test fixtures.
 
-- **Memory is tight.** Chromium takes about 430 MB of the Pi's 905 MB. On
-  2026-11-10 the Pi had about 30 MB free and 180 MB in swap.
-- **Any motion is expensive.** Every animation redraws the whole screen on the
-  CPU. The Christmas snow kept the Pi at 69% CPU and 67 °C, and the Pi died
-  without a clean shutdown at about 17:25 that day. The snow has since been
-  removed; the Pi now idles at about 3%.
+## Package and architecture
 
-Measured on a PC with software drawing, against the same server and data:
+- rust/ includes its logos, fonts and sheet-layout data, independent of web/.
+- Native screens call Rust services directly, with no HTTP server or browser.
+- SQLite keeps the existing users/events/meta schema and request IDs. Native
+  pending receipts survive process restarts in a separate table.
+- One app owns the database. Sync releases the database mutex while waiting on
+  Google, allowing offline taps to continue.
+- Attendance, roster and Sheets rules retain their existing behavior.
+- Credentials, runtime data, backups and configuration stay outside the binary.
+  Import uses a verified copy while the old service is stopped. Both apps must
+  never write the same database concurrently.
 
-| Client | Memory (working set) | Private memory |
-|---|---|---|
-| Slint prototype | 35 MB | 9 MB |
-| Chrome, blank page | 333 MB | 116 MB |
-| Chrome, page matching the prototype | 388 MB | 141 MB |
-| Chrome, full tap screen | 371 MB | 138 MB |
+## Native workflow checklist
 
-The gap is the browser itself, not the page.
+- [ ] Tap screen: existing result/refusal/replay states, attendance, leaderboards,
+      sync badge and appearance, now backed by Rust services.
+- [ ] Reader: form input stays separate from station scans; digits plus Enter,
+      overflow protection, Linux reader-speed filtering and keyboard navigation.
+- [ ] Durable unconfirmed receipts and explicit timezone handling.
+- [ ] Register: validation, duplicate checks, unknown-card and cardless-row
+      choices, draft preservation and a clear return to the tap screen.
+- [ ] Admin: sign-in/out, session expiry and lock on returning to the tap screen.
+- [ ] People: search/filter, edit, deactivate and reactivate without losing history.
+- [ ] Attendance, sync errors, roster warnings and unlinked staffers.
+- [ ] Hours: inclusive date filters, month shortcuts, uncounted sessions and CSV.
+- [ ] Appearance: native image selection/removal, opacity, theme, hidden rankings.
+- [ ] Native file selection/export without a browser or desktop file dialog.
+- [ ] Backup and validated restore with a recoverable pre-restore copy.
+- [ ] Shutdown: current attendance, Cancel focused by default, Escape and errors.
 
-The full native app was measured again on 2026-11-10 with software rendering,
-a background picture and the local data copy selected for testing:
+## Rust services
 
-| Client | Idle working set | Working set during 20 reader inputs | CPU idle / 20 inputs (one core) |
-|---|---|---|---|
-| Native, release | 37.4 MiB | 38.6 MiB | 3.12% / 6.58% |
-| Chrome, all 7 processes | 394.5 MiB | 421.0 MiB | 16.77% / 25.51% |
+- [x] SQLite schema compatibility, transactions, prepared queries and receipts.
+- [x] Person validation, sessions/hours, CSV and timezone helpers.
+- [x] Scanner policy and reader tests, including interrupted receipts.
+- [x] Standalone service integration: login, edits, appearance, backup and restore.
+- [x] Sheets: service-account login, authoritative startup reconciliation,
+      pending-tap preservation, deterministic writes, roster conflicts, styles
+      and Search formulas, verified against a stand-in.
+- [x] Background Google calls outside the UI thread/database critical section.
+- [ ] Startup/shutdown backups, clock/RTC readiness and Linux shutdown behavior.
 
-These are sample means on the PC. The setup, private memory, test coverage and
-remaining gaps are recorded in `rust/VALIDATION.md`.
+## Verification and rollout
 
-## Goal
+Windows automated parity checks and the fixes from the web comparison are
+recorded in [rust/NATIVE-VALIDATION.md](rust/NATIVE-VALIDATION.md). These establish
+service and selected native interaction behavior; the complete manual workflow,
+footprint and Pi hardware checks below remain separate rollout requirements.
 
-Replace Chromium on the Pi with a native tap screen in Rust + Slint (`rust/`)
-that does everything the web tap screen (`/station` in `web/views.js`) does.
-The Node server stays as it is: it still runs Admin, Register, Sheets sync and
-the database.
+1. Compare domain edge cases against the Node reference.
+2. Test Sheets failures, retries, hand-edited tabs, restore and pending taps.
+3. Run the standalone app with sync disabled against a disposable database copy.
+   Check every native workflow using screenshots and direct app control.
+4. Verify it runs with Node stopped and never launches a browser. Build the Rust
+   package without assets from web/.
+5. Measure idle and twenty-reader-input memory/CPU again for the complete app.
+6. Document installation, import, backup/restore and rollback. Keep web/ until the
+   replacement is signed off.
+7. Cross-build arm64 and test the actual Pi display, reader, fonts and Linux
+   backend at a quiet time. Arrange boot/service switchover together afterward.
 
-**It goes on the Pi only once it is complete.** Until then the web tap screen
-stays deployed.
+## UI basis
 
-## How it talks to the server
+Use Ruled's app-shell and form patterns, The LaSallian's #054805 brand, Schibsted
+Grotesk, keyboard-capable controls and clear status text. No decorative motion.
+File selection works in Slint without a browser, GTK dialog or compositor.
 
-The same way the web tap screen does:
+## Historical validation
 
-- `GET /station/events` (server-sent events)
-  - `appearance`: background picture, panel opacity, theme. Sent on connect
-    (new: `web/server.js` now sends it, the web page already has it in its HTML)
-    and whenever it changes in Admin.
-  - `status`: clock readiness, sync badge, who's in, leaderboards.
-- `POST /station/tap` with `{ rfid, requestId }` and header `X-Station: 1`.
-  A tap that wasn't confirmed keeps its `requestId`, so tapping again is safe.
-- `POST /station/sync` (the cloud in the header) and `POST /station/shutdown`.
-- `GET /background?v=<version>` for the picture.
-
-## Feature checklist
-
-Everything the web tap screen does, in its order on screen.
-
-Checked items have been exercised on Windows against the web screen. This does
-not sign off the Pi: Linux reader timing, direct keyboard ownership and the browser
-handoff still need their hardware checks. See `rust/VALIDATION.md` for the setup,
-measurements and remaining gaps.
-
-**Header**
-- [x] The LaSallian logo and the system's name
-- [x] Clock, ticking once a second (Asia/Manila)
-- [x] Sync cloud: synced / syncing · n / offline · n saved / sync error; tapping it syncs now
-- [ ] Register and Admin: open the web page in a browser launched on demand
-- [x] Shut down button
-
-**Main panel (tap result)**
-- [x] Idle: "Tap your ID", and the note when an earlier tap still needs confirming
-- [x] Connecting (no server yet) and "Setting the clock…" (clock not ready)
-- [x] IN, with a note when the last check-in was never tapped out
-- [x] OUT
-- [x] Tap confirmed (a replayed tap), with when the original was recorded
-- [x] Not registered (with the card number), ID deactivated, Not recorded (clock)
-- [x] Repeat ignored (and no change if a result is already showing)
-- [x] Not confirmed yet (network error), which stays until the next tap
-- [x] Results clear after 6 seconds
-
-**Side panels**
-- [x] In the office (n): name, section pill in its section's colour, status pill, "since" time
-- [x] Leaderboard · month: section bars and top 10 staffers, bars against the leader
-- [x] Rankings hidden: "Results coming soon"
-- [x] Waiting for the office computer, when disconnected
-
-**Appearance**
-- [x] Background picture, cover-fit, with panel opacity
-- [x] Christmas theme: colours, candy-cane stripe, still lights (nothing moves)
-
-**Shut down**
-- [ ] Confirmation listing who's still in, with the warning; Cancel focused by default
-- [x] "Checking attendance…" while disconnected
-- [x] "Shutting down…" and the error if it fails
-- [x] Escape closes it
-
-**Reader and connection**
-- [ ] Card reader: digits then Enter; on Linux only digits at reader speed (≤ 100 ms apart)
-- [x] Reconnecting toast and automatic reconnect after the server restarts
-- [ ] No "Click to resume": with no desktop, the app gets the keyboard directly
-
-## Steps
-
-1. **Build it on the PC** against a local server with sync off and a copy of the
-   Pi's data:
-   ```bash
-   cd web
-   SHEETS_SPREADSHEET_ID= DB_PATH=<scratch>/residency.db BACKUP_DIR=<scratch>/backups PORT=3107 node server.js
-   ```
-   Split the UI into `rust/ui/*.slint`, logic in `rust/src/`. Work through the
-   checklist above.
-2. **Check it side by side** with the web tap screen on the PC: every state in the
-   checklist, both themes, a background picture, and the shutdown flow (which only
-   logs off Linux).
-3. **Measure again on the PC** (memory and CPU, idle and during 20 taps) to confirm
-   the full version is still far below Chrome.
-4. **Move the Pi to the new layout**, together, at a quiet time. The repo now keeps
-   the server in `web/`, but the Pi still runs from `~/tls-residency`:
-   - stop `attendance.service`;
-   - `git pull`, then move `.env`, `residency.db*`, `backups/`, `background.img`
-     and the service-account key into `web/`;
-   - set `WorkingDirectory=/home/tlsadmin/tls-residency/web`, `daemon-reload`, start;
-   - check the tap screen and a test tap.
-5. **Build for the Pi** (arm64, cross-compiled on the PC) with Slint's
-   `linuxkms` backend so it draws straight to the screen with OpenGL ES 2.0 and
-   needs no desktop.
-6. **Try it on the Pi** at a quiet time, with Chromium closed: taps, all the
-   checks in step 2, then memory, CPU and temperature for a while.
-7. **Switch over**: start the Slint app at boot instead of the desktop and
-   Chromium, and keep Chromium installed for Register and Admin.
-
-## Open questions
-
-- **Register and Admin on the Pi.** They are web pages. Opening them would start a
-  browser on demand, which brings Chromium's memory back while it's open. Fine for
-  occasional use; worth checking it closes cleanly and hands the screen back.
-- **Without a desktop**, how a browser is shown for Register: under a small kiosk
-  compositor such as `cage`, or by keeping the desktop and running Slint under it.
-- **Fonts.** The Pi's default fonts differ from the PC's; check text fits on the
-  real monitor.
+The earlier tap-only Rust client used about 39 MiB during twenty inputs, versus
+Chrome's 421 MiB on the same PC. That comparison is in rust/VALIDATION.md. Those
+figures do not establish the footprint of the complete standalone replacement;
+it must be measured after integration.

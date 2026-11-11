@@ -1,0 +1,787 @@
+// Register and Admin, drawn inside the tap screen's own window and styled
+// after the web app's admin pages (web/views.js `layout`): light, a top bar
+// of links, a 960px column of white panels with uppercase headings, tables.
+//
+// Rust drives everything through the `Admin` global, so the tap screen window
+// (station.slint) only has to place an AdminView over itself.
+
+import { LineEdit, ComboBox, Slider, ScrollView, StandardListView } from "std-widgets.slint";
+
+export struct PersonRow { name: string, student-id: string, section: string, status: string, telegram: string, card: string, active: bool, status-bg: color, status-fg: color }
+export struct HourRow { name: string, student-id: string, hours: string, sessions: string, still-in: bool, uncounted: string, active: bool }
+export struct InRow { name: string, section: string, status: string, since: string }
+export struct CardRow { card: string, seen: string }
+export struct LinkRow { name: string, student-id: string, section: string, row: string }
+
+export global Admin {
+    // Which page: login, dashboard, people, edit, confirm-active, register,
+    // hours, appearance, system, files, restore.
+    in-out property <string> page: "login";
+    in property <bool> admin;
+    in property <bool> busy;
+    in property <string> notice;
+    in property <bool> error;
+    // Header sync badge
+    in property <string> sync-status;
+    in property <color> sync-bg: #eef2f7;
+    in property <color> sync-fg: #647082;
+    in property <bool> sync-enabled;
+    // Dashboard
+    in property <[InRow]> in-rows;
+    in property <string> sheet-text;
+    // System
+    in property <string> diagnostics;
+    // Login
+    in-out property <string> username;
+    in-out property <string> password;
+    // Person form (Register and Edit)
+    in-out property <string> person-name;
+    in-out property <string> student-id;
+    in-out property <string> section;
+    in-out property <string> status;
+    in-out property <string> telegram;
+    in-out property <string> card;
+    in property <[string]> sections;
+    in property <[string]> statuses;
+    in property <[CardRow]> card-rows;
+    in property <[LinkRow]> link-rows;
+    in property <[string]> warnings;
+    // People and Hours
+    in-out property <string> query;
+    in-out property <string> section-filter: "All sections";
+    in-out property <string> status-filter: "All statuses";
+    in-out property <string> active-filter: "All people";
+    in-out property <string> sort-by: "Name";
+    in-out property <bool> sort-descending;
+    in property <string> page-caption;
+    in property <bool> has-previous;
+    in property <bool> has-next;
+    in property <[PersonRow]> people-rows;
+    in property <[HourRow]> hour-rows;
+    in-out property <int> selected: -1;
+    in property <string> selection-detail;
+    in property <string> active-action: "Deactivate";
+    in property <string> edit-title;
+    in property <bool> restored-draft;
+    in-out property <string> from;
+    in-out property <string> to;
+    in property <[string]> months;
+    in property <int> month-on: -1;
+    in property <string> report-caption;
+    // Appearance
+    in-out property <float> panel-opacity: 85;
+    in-out property <bool> christmas;
+    in-out property <bool> hidden-rankings;
+    in property <image> preview;
+    in property <bool> has-preview;
+    // Files
+    in-out property <string> folder;
+    in-out property <string> filename;
+    in property <[StandardListViewItem]> files;
+    in-out property <int> file-selected: -1;
+    in property <string> file-title;
+    in property <bool> export-mode;
+    in property <string> restore-detail;
+
+    callback action(string);
+    callback navigate(string);
+    callback choose-card(int);
+    callback choose-person(int);
+    callback choose-month(int);
+    callback select-row(int);
+    callback file-click(int);
+    callback activity;
+}
+
+// The web app's colours (web/views.js `layout` :root).
+global Web {
+    out property <color> ink: #12181f;
+    out property <color> panel: #ffffff;
+    out property <color> line: #e3e8ee;
+    out property <color> muted: #647082;
+    out property <color> brand: #1f6feb;
+    out property <color> in: #137a4b;
+    out property <color> in-bg: #e4f6ec;
+    out property <color> out: #8a5a00;
+    out property <color> danger: #b42318;
+    out property <color> page: #f5f7fa;
+    out property <color> ghost: #eef2f7;
+}
+
+// .btn, .btn.ghost, .btn.danger and the month tabs. Keyboard: Tab to it,
+// Enter or Space presses it.
+component Btn inherits Rectangle {
+    min-height: 44px;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    in property <string> text;
+    in property <string> kind: "primary"; // primary | ghost | danger | tab | tab-on
+    in property <bool> enabled: true;
+    callback clicked;
+    property <bool> solid: root.kind == "primary" || root.kind == "tab-on";
+    property <color> bg: root.solid ? Web.brand : root.kind == "danger" ? transparent : Web.ghost;
+    border-radius: 8px;
+    background: area.has-hover && root.enabled ? (root.solid ? root.bg.brighter(0.08) : root.kind == "danger" ? #fce8e6 : root.bg.darker(0.04)) : root.bg;
+    border-width: fs.has-focus ? 2px : 0px;
+    border-color: Web.brand;
+    opacity: root.enabled ? 1 : 0.55;
+    forward-focus: fs;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+    HorizontalLayout {
+        padding-left: root.kind == "danger" ? 10px : 16px;
+        padding-right: root.kind == "danger" ? 10px : 16px;
+        padding-top: root.kind == "tab" || root.kind == "tab-on" ? 7px : 9px;
+        padding-bottom: root.kind == "tab" || root.kind == "tab-on" ? 7px : 9px;
+        Text {
+            text: root.text;
+            color: root.solid ? #ffffff : root.kind == "danger" ? Web.danger : Web.ink;
+            font-weight: 600;
+            font-size: root.kind == "tab" || root.kind == "tab-on" ? 14px : 15px;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+    area := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { fs.focus(); root.clicked(); }
+    }
+    fs := FocusScope {
+        enabled: root.enabled;
+        width: 0px; height: 0px;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == Key.Space) { root.clicked(); return accept; }
+            return reject;
+        }
+    }
+}
+
+// A link in the top bar: muted, brand-coloured when it is the current page.
+export component NavLink inherits Rectangle {
+    in property <string> text;
+    in property <bool> on;
+    in property <bool> enabled: true;
+    callback clicked;
+    forward-focus: focus;
+    min-height: 44px;
+    border-width: focus.has-focus ? 1px : 0px;
+    border-color: Web.brand;
+    border-radius: 6px;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+    HorizontalLayout {
+        padding-left: 4px; padding-right: 4px;
+        Text {
+            text: root.text;
+            color: root.on || area.has-hover ? Web.brand : Web.muted;
+            font-weight: 500;
+            vertical-alignment: center;
+        }
+    }
+    area := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { focus.focus(); root.clicked(); } }
+    focus := FocusScope {
+        enabled: root.enabled;
+        width: 0px; height: 0px;
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == Key.Space) { root.clicked(); return accept; }
+            return reject;
+        }
+    }
+}
+
+// .panel with its uppercase h2.
+component Panel inherits Rectangle {
+    in property <string> title;
+    in property <color> title-color: Web.muted;
+    background: Web.panel;
+    border-width: 1px;
+    border-color: Web.line;
+    border-radius: 10px;
+    VerticalLayout {
+        padding: 20px;
+        spacing: 14px;
+        if root.title != "": Text {
+            text: root.title;
+            color: root.title-color;
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: 0.9px;
+            wrap: word-wrap;
+        }
+        @children
+    }
+}
+
+component Label inherits Text { color: Web.muted; font-size: 13px; }
+component Sub inherits Text { color: Web.muted; wrap: word-wrap; }
+component H1 inherits Text { color: Web.ink; font-size: 22px; font-weight: 700; }
+component Th inherits Text { color: Web.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; overflow: elide; vertical-alignment: center; }
+component Td inherits Text { color: Web.ink; overflow: elide; vertical-alignment: center; }
+component Hr inherits Rectangle { height: 1px; background: Web.line; }
+
+// A labelled text box.
+component Field inherits VerticalLayout {
+    in property <string> label;
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <bool> read-only;
+    in property <bool> password;
+    in property <bool> enabled: true;
+    callback accepted;
+    callback edited;
+    spacing: 5px;
+    Label { text: root.label; }
+    LineEdit {
+        text <=> root.text;
+        placeholder-text: root.placeholder;
+        read-only: root.read-only;
+        enabled: root.enabled;
+        input-type: root.password ? InputType.password : InputType.text;
+        accessible-label: root.label;
+        min-height: 38px;
+        accepted => { root.accepted(); }
+        edited => { root.edited(); }
+    }
+}
+
+component Choice inherits VerticalLayout {
+    in property <string> label;
+    in property <[string]> model;
+    in-out property <string> value;
+    in property <bool> enabled: true;
+    callback selected;
+    spacing: 5px;
+    Label { text: root.label; }
+    ComboBox { model: root.model; current-value <=> root.value; enabled: root.enabled; min-height: 38px; selected => { root.selected(); } }
+}
+
+// One table row: cells laid out by the caller, a rule beneath unless last.
+component Tr inherits VerticalLayout {
+    in property <bool> last;
+    HorizontalLayout {
+        padding-top: 10px; padding-bottom: 10px;
+        spacing: 12px;
+        @children
+    }
+    if !root.last: Hr {}
+}
+
+component Pagination inherits HorizontalLayout {
+    spacing: 12px; alignment: start;
+    Btn { text: "Previous page"; kind: "ghost"; enabled: Admin.has-previous && !Admin.busy; clicked => { Admin.action("previous-page"); } }
+    Text { text: Admin.page-caption; color: Web.muted; vertical-alignment: center; font-size: 13px; }
+    Btn { text: "Next page"; kind: "ghost"; enabled: Admin.has-next && !Admin.busy; clicked => { Admin.action("next-page"); } }
+}
+
+export component AdminView inherits Rectangle {
+    background: Web.page;
+
+    public function focus-start() { shell.focus(); }
+
+    property <bool> signed-in: Admin.admin;
+    property <string> p: Admin.page;
+
+    shell := FocusScope {
+        capture-key-pressed(event) => { Admin.activity(); return reject; }
+        key-pressed(event) => {
+            if (event.text == Key.Escape && !Admin.busy) { Admin.action("escape"); return accept; }
+            return reject;
+        }
+        TouchArea {
+            changed mouse-x => { Admin.activity(); }
+            changed mouse-y => { Admin.activity(); }
+            pointer-event => { Admin.activity(); }
+            scroll-event => { Admin.activity(); return reject; }
+
+            VerticalLayout {
+                // ---- The top bar (web: navbar) ----
+                Rectangle {
+                    background: Web.panel;
+                    HorizontalLayout {
+                        padding-left: 28px; padding-right: 28px; padding-top: 14px; padding-bottom: 14px;
+                        spacing: 18px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VerticalLayout { alignment: center; Image { source: @image-url("../assets/TLS_star_green.svg"); width: 28px; height: 26px; } }
+                            if !root.signed-in: VerticalLayout { alignment: center; Image { source: @image-url("../assets/TLS_name_green.svg"); width: 120px; height: 18px; } }
+                        }
+                        if !root.signed-in: Text { text: "Staffer Attendance Monitoring System"; color: Web.muted; font-size: 13px; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        if root.signed-in: NavLink { text: "Dashboard"; on: root.p == "dashboard"; clicked => { Admin.navigate("dashboard"); } }
+                        if root.signed-in: NavLink { text: "People"; on: root.p == "people" || root.p == "edit" || root.p == "confirm-active"; clicked => { Admin.navigate("people"); } }
+                        if root.signed-in: NavLink { text: "Hours"; on: root.p == "hours"; clicked => { Admin.navigate("hours"); } }
+                        if root.signed-in: NavLink { text: "Appearances"; on: root.p == "appearance"; clicked => { Admin.navigate("appearance"); } }
+                        if root.signed-in: NavLink { text: "System"; on: root.p == "system" || root.p == "restore"; clicked => { Admin.navigate("system"); } }
+                        if !root.signed-in && root.p == "register": NavLink { text: "Register"; on: true; clicked => { Admin.navigate("register"); } }
+                        if !root.signed-in && root.p == "register": NavLink { text: "Admin"; clicked => { Admin.navigate("dashboard"); } }
+                        NavLink { text: "Tap screen"; clicked => { Admin.navigate("station"); } }
+                        if root.signed-in: Btn { text: "Sign out"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("logout"); } }
+                        if root.signed-in && Admin.sync-enabled: VerticalLayout {
+                          alignment: center;
+                          Rectangle {
+                            horizontal-stretch: 0;
+                            background: Admin.sync-bg;
+                            border-radius: 999px;
+                            HorizontalLayout {
+                                padding-left: 12px; padding-right: 12px; padding-top: 5px; padding-bottom: 5px;
+                                Text { text: Admin.sync-status; color: Admin.sync-fg; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+                            }
+                            TouchArea { mouse-cursor: pointer; clicked => { Admin.action("sync"); } }
+                          }
+                        }
+                    }
+                }
+                Hr {}
+
+                if Admin.notice != "": Rectangle {
+                    background: Admin.error ? #fce8e6 : Web.in-bg;
+                    border-radius: 8px;
+                    HorizontalLayout {
+                        padding-left: 14px; padding-right: 14px; padding-top: 11px; padding-bottom: 11px;
+                        Text { text: Admin.notice; color: Admin.error ? Web.danger : Web.in; font-weight: 500; wrap: word-wrap; }
+                    }
+                }
+
+                // ---- The page (web: main, 960px wide) ----
+                sv := ScrollView {
+                    vertical-stretch: 1;
+                    HorizontalLayout {
+                        width: sv.visible-width;
+                        alignment: center;
+                        VerticalLayout {
+                            width: min(960px, sv.visible-width - 40px);
+                            padding-top: 28px; padding-bottom: 60px;
+                            spacing: 22px;
+                            alignment: start;
+
+                            if Admin.busy: Sub { text: "Working… Taps are still recorded."; }
+
+                            // ---- Sign in ----
+                            if root.p == "login": VerticalLayout {
+                                spacing: 18px;
+                                H1 { text: "Admin sign in"; }
+                                HorizontalLayout {
+                                    alignment: start;
+                                    Panel {
+                                        width: min(420px, sv.visible-width - 40px);
+                                        Field { label: "Username"; text <=> Admin.username; enabled: !Admin.busy; }
+                                        Field { label: "Password"; text <=> Admin.password; password: true; enabled: !Admin.busy; accepted => { Admin.action("login"); } }
+                                        HorizontalLayout { alignment: start; Btn { text: "Sign in"; enabled: !Admin.busy; clicked => { Admin.action("login"); } } }
+                                    }
+                                }
+                            }
+
+                            // ---- Dashboard ----
+                            if root.p == "dashboard": VerticalLayout {
+                                spacing: 22px;
+                                VerticalLayout { spacing: 4px; H1 { text: "Dashboard"; } Sub { text: "Who is in the office right now. This page updates by itself."; } }
+                                Panel {
+                                    title: "CURRENTLY IN (" + Admin.in-rows.length + ")";
+                                    if Admin.in-rows.length == 0: Sub { text: "Nobody is checked in right now."; }
+                                    if Admin.in-rows.length > 0: VerticalLayout {
+                                        Tr { Th { text: "NAME"; width: 40%; } Th { text: "SECTION"; width: 20%; } Th { text: "STATUS"; width: 18%; } Th { text: "CHECKED IN"; } }
+                                        for r[i] in Admin.in-rows: Tr {
+                                            last: i == Admin.in-rows.length - 1;
+                                            Td { text: r.name; width: 40%; } Td { text: r.section; width: 20%; } Td { text: r.status; width: 18%; } Td { text: r.since; }
+                                        }
+                                    }
+                                }
+                                Panel {
+                                    title: "GOOGLE SHEET";
+                                    Text { text: Admin.sheet-text; color: Web.ink; wrap: word-wrap; }
+                                    if Admin.sync-enabled: HorizontalLayout { alignment: start; Btn { text: "Sync now"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("sync"); } } }
+                                }
+                            }
+
+                            // ---- People ----
+                            if root.p == "people": VerticalLayout {
+                                spacing: 22px;
+                                VerticalLayout { spacing: 4px; H1 { text: "People"; } Sub { text: "Manage the roster."; } }
+                                HorizontalLayout { alignment: start; Btn { text: "Register someone"; enabled: !Admin.busy; clicked => { Admin.navigate("register"); } } }
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    Field { label: "Search"; text <=> Admin.query; edited => { Admin.action("search"); } placeholder: "Name, ID number or card"; horizontal-stretch: 2; }
+                                    Choice { label: "Section"; model: ["All sections", "University", "Menagerie", "Sports", "Vanguard", "Intermedia", "Photo", "A&G", "Layout", "Web"]; value <=> Admin.section-filter; selected => { Admin.action("filter"); } horizontal-stretch: 1; }
+                                    Choice { label: "Status"; model: ["All statuses", "Newbie", "Probie", "Regular", "EB", "EAL", "Dummy"]; value <=> Admin.status-filter; selected => { Admin.action("filter"); } horizontal-stretch: 1; }
+                                }
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    Choice { label: "People"; model: ["All people", "Active", "Deactivated"]; value <=> Admin.active-filter; selected => { Admin.action("filter"); } }
+                                    Choice { label: "Sort by"; model: ["Name", "ID number", "Section", "Status"]; value <=> Admin.sort-by; selected => { Admin.action("filter"); } }
+                                    VerticalLayout { alignment: end; Btn { text: Admin.sort-descending ? "Descending" : "Ascending"; kind: "ghost"; clicked => { Admin.sort-descending = !Admin.sort-descending; Admin.action("filter"); } } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                Pagination {}
+                                Panel {
+                                    title: "ROSTER";
+                                    if Admin.people-rows.length == 0: Sub { text: "No one matches."; }
+                                    for r[i] in Admin.people-rows: Tr {
+                                        last: i == Admin.people-rows.length - 1;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1; spacing: 8px;
+                                            Text { text: r.name; color: Web.ink; wrap: word-wrap; font-weight: 600; }
+                                            Text { text: r.student-id + " · " + r.section + " · " + r.telegram + " · Card: " + r.card; color: Web.muted; wrap: word-wrap; font-size: 13px; }
+                                            HorizontalLayout {
+                                                alignment: start; spacing: 8px;
+                                                Rectangle {
+                                                    background: r.status-bg; border-radius: 4px;
+                                                    HorizontalLayout { padding: 4px; Text { text: r.status; color: r.status-fg; font-size: 13px; } }
+                                                }
+                                                if !r.active: Text { text: "Deactivated"; color: Web.danger; font-size: 13px; vertical-alignment: center; }
+                                            }
+                                        }
+                                        Btn { text: "Edit"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.selected = i; Admin.action("edit"); } }
+                                        Btn { text: r.active ? "Deactivate" : "Reactivate"; kind: r.active ? "danger" : "ghost"; enabled: !Admin.busy; clicked => { Admin.selected = i; Admin.action("toggle-active"); } }
+                                    }
+                                }
+                                if Admin.warnings.length > 0: Panel {
+                                    title: "STAFFERS SHEET (" + Admin.warnings.length + ")";
+                                    title-color: Web.out;
+                                    for w in Admin.warnings: Text { text: w; color: Web.ink; wrap: word-wrap; }
+                                }
+                                if Admin.link-rows.length > 0: Panel {
+                                    title: "IN THE SHEET, NO CARD NUMBER YET (" + Admin.link-rows.length + ")";
+                                    for r[i] in Admin.link-rows: Tr {
+                                        last: i == Admin.link-rows.length - 1;
+                                        Td { text: r.name; width: 36%; } Td { text: r.student-id; width: 18%; } Td { text: r.section; width: 18%; } Td { text: r.row; color: Web.muted; }
+                                    }
+                                }
+                            }
+
+                            // ---- Edit, Register ----
+                            if root.p == "edit" || root.p == "register": VerticalLayout {
+                                spacing: 22px;
+                                if root.p == "register": VerticalLayout {
+                                    spacing: 4px;
+                                    H1 { text: "Register"; }
+                                    Sub { text: "Register once, then return to the tap screen to check in. All fields are required."; }
+                                }
+                                if root.p == "edit": H1 { text: "People"; }
+                                if Admin.restored-draft: HorizontalLayout {
+                                    spacing: 12px;
+                                    Text { text: "Your unsaved details were restored. Review them before saving."; color: Web.muted; wrap: word-wrap; horizontal-stretch: 1; }
+                                    Btn { text: "Discard them"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("discard-draft"); } }
+                                }
+                                Panel {
+                                    title: root.p == "edit" ? Admin.edit-title : "REGISTER SOMEONE";
+                                    HorizontalLayout {
+                                        spacing: 12px;
+                                        Field { label: "Name"; text <=> Admin.person-name; enabled: !Admin.busy; horizontal-stretch: 2; }
+                                        Field { label: "ID number"; text <=> Admin.student-id; enabled: !Admin.busy; horizontal-stretch: 1; }
+                                        Choice { label: "Section"; model: Admin.sections; value <=> Admin.section; enabled: !Admin.busy; horizontal-stretch: 1; }
+                                        Choice { label: "Status"; model: Admin.statuses; value <=> Admin.status; enabled: !Admin.busy; horizontal-stretch: 1; }
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 12px;
+                                        Field { label: "Telegram (optional)"; text <=> Admin.telegram; placeholder: "@handle"; enabled: !Admin.busy; horizontal-stretch: 1; }
+                                        Field {
+                                            label: root.p == "edit" ? "Card number" : "Card number — tap their ID now";
+                                            text <=> Admin.card;
+                                            placeholder: "tap ID, or type the number";
+                                            read-only: root.p == "edit";
+                                            enabled: !Admin.busy && root.p != "edit";
+                                            horizontal-stretch: 1;
+                                            accepted => { Admin.action("save-person"); }
+                                        }
+                                    }
+                                    HorizontalLayout {
+                                        alignment: start; spacing: 12px;
+                                        Btn { text: root.p == "edit" ? "Save" : "Add person"; enabled: !Admin.busy; clicked => { Admin.action("save-person"); } }
+                                        Btn { text: "Cancel"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("escape"); } }
+                                    }
+                                    if root.p == "register": Text {
+                                        text: "The ID number identifies the staffer. The card number comes from the reader: click its box, then tap the card.";
+                                        color: Web.out; font-size: 13px; wrap: word-wrap;
+                                    }
+                                }
+                                if root.p == "register": Panel {
+                                    title: "UNRECOGNIZED TAPS (" + Admin.card-rows.length + ")";
+                                    if Admin.card-rows.length == 0: Sub { text: "None since the app started."; }
+                                    if Admin.card-rows.length > 0: VerticalLayout {
+                                        Tr { Th { text: "CARD NUMBER"; width: 35%; } Th { text: "SEEN AT"; width: 35%; } Rectangle {} }
+                                        for r[i] in Admin.card-rows: Tr {
+                                            last: i == Admin.card-rows.length - 1;
+                                            Td { text: r.card; width: 35%; font-family: "Consolas"; } Td { text: r.seen; width: 35%; }
+                                            HorizontalLayout { alignment: end; Btn { text: "Use this ID"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.choose-card(i); } } }
+                                        }
+                                    }
+                                    Text { text: "Cleared when the app restarts."; color: Web.out; font-size: 13px; }
+                                }
+                                if root.p == "register" && Admin.link-rows.length > 0: Panel {
+                                    title: "IN THE SHEET, NO CARD NUMBER YET (" + Admin.link-rows.length + ")";
+                                    for r[i] in Admin.link-rows: Tr {
+                                        last: i == Admin.link-rows.length - 1;
+                                        Td { text: r.name; width: 36%; } Td { text: r.student-id; width: 18%; } Td { text: r.section; width: 18%; }
+                                        HorizontalLayout { alignment: end; Btn { text: "Use"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.choose-person(i); } } }
+                                    }
+                                }
+                            }
+
+                            // ---- Deactivate / reactivate ----
+                            if root.p == "confirm-active": VerticalLayout {
+                                spacing: 22px;
+                                H1 { text: "People"; }
+                                Panel {
+                                    title: Admin.active-action == "Deactivate" ? "DEACTIVATE THIS PERSON?" : "REACTIVATE THIS PERSON?";
+                                    Text { text: Admin.selection-detail; color: Web.ink; wrap: word-wrap; }
+                                    Sub { text: "A deactivated card stops recording taps. Attendance history is kept."; }
+                                    HorizontalLayout {
+                                        alignment: start; spacing: 12px;
+                                        Btn { text: Admin.active-action; kind: Admin.active-action == "Deactivate" ? "danger" : "primary"; enabled: !Admin.busy; clicked => { Admin.action("confirm-active"); } }
+                                        Btn { text: "Cancel"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("escape"); } }
+                                    }
+                                }
+                            }
+
+                            // ---- Hours ----
+                            if root.p == "hours": VerticalLayout {
+                                spacing: 20px;
+                                VerticalLayout { spacing: 4px; H1 { text: "Residency hours"; } Sub { text: "Total time each person has logged."; } }
+                                HorizontalLayout {
+                                    alignment: start; spacing: 6px;
+                                    Btn { text: "Previous month"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("previous-month"); } }
+                                    Btn { text: "This month"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("this-month"); } }
+                                    Btn { text: "Next month"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("next-month"); } }
+                                    ComboBox { model: Admin.months; current-index: Admin.month-on; enabled: !Admin.busy; selected(value) => { Admin.choose-month(self.current-index); } }
+                                }
+                                HorizontalLayout {
+                                    spacing: 12px; alignment: start;
+                                    Field { label: "From"; text <=> Admin.from; placeholder: "YYYY-MM-DD"; width: 170px; accepted => { Admin.action("report"); } }
+                                    Field { label: "To"; text <=> Admin.to; placeholder: "YYYY-MM-DD"; width: 170px; accepted => { Admin.action("report"); } }
+                                    VerticalLayout { alignment: end; Btn { text: "Apply"; enabled: !Admin.busy; clicked => { Admin.action("report"); } } }
+                                    VerticalLayout { alignment: end; Btn { text: "Download CSV"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("export"); } } }
+                                }
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    Field { label: "Search"; text <=> Admin.query; edited => { Admin.action("search"); } placeholder: "Name or ID number"; horizontal-stretch: 2; }
+                                    Choice { label: "Section"; model: ["All sections", "University", "Menagerie", "Sports", "Vanguard", "Intermedia", "Photo", "A&G", "Layout", "Web"]; value <=> Admin.section-filter; selected => { Admin.action("filter"); } horizontal-stretch: 1; }
+                                    Choice { label: "Status"; model: ["All statuses", "Newbie", "Probie", "Regular", "EB", "EAL", "Dummy"]; value <=> Admin.status-filter; selected => { Admin.action("filter"); } horizontal-stretch: 1; }
+                                }
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    Choice { label: "People"; model: ["All people", "Active", "Deactivated"]; value <=> Admin.active-filter; selected => { Admin.action("filter"); } }
+                                    Choice { label: "Sort by"; model: ["Name", "ID number", "Section", "Status"]; value <=> Admin.sort-by; selected => { Admin.action("filter"); } }
+                                    VerticalLayout { alignment: end; Btn { text: Admin.sort-descending ? "Descending" : "Ascending"; kind: "ghost"; clicked => { Admin.sort-descending = !Admin.sort-descending; Admin.action("filter"); } } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                Pagination {}
+                                Panel {
+                                    title: Admin.report-caption;
+                                    if Admin.hour-rows.length == 0: Sub { text: "No one matches."; }
+                                    if Admin.hour-rows.length > 0: VerticalLayout {
+                                        Tr { Th { text: "NAME"; width: 32%; } Th { text: "STUDENT ID"; width: 15%; } Th { text: "HOURS"; width: 10%; } Th { text: "SESSIONS"; width: 11%; } Th { text: "STILL IN"; width: 10%; } Th { text: "UNCOUNTED"; } }
+                                        for r[i] in Admin.hour-rows: Rectangle {
+                                            background: Admin.selected == i ? #e8f0fe : row-area.has-hover ? #f8fafc : transparent;
+                                            forward-focus: row-focus;
+                                            accessible-role: button;
+                                            accessible-label: r.name + ", " + r.hours + " hours, " + (r.uncounted == "" ? "no uncounted sessions" : r.uncounted + " uncounted sessions");
+                                            accessible-action-default => { Admin.selected = i; Admin.select-row(i); }
+                                            border-width: row-focus.has-focus ? 1px : 0px;
+                                            border-color: Web.brand;
+                                            border-radius: 6px;
+                                            VerticalLayout {
+                                                Tr {
+                                                    last: i == Admin.hour-rows.length - 1;
+                                                    Td { text: r.name + (r.active ? "" : "  (deactivated)"); width: 32%; }
+                                                    Td { text: r.student-id; width: 15%; }
+                                                    Td { text: r.hours; width: 10%; font-weight: 600; }
+                                                    Td { text: r.sessions; width: 11%; }
+                                                    Td { text: r.still-in ? "yes" : ""; width: 10%; color: Web.in; }
+                                                    Td { text: r.uncounted; color: Web.out; }
+                                                }
+                                                if Admin.selected == i && Admin.selection-detail != "": Text {
+                                                    text: Admin.selection-detail; color: Web.ink; wrap: word-wrap;
+                                                }
+                                            }
+                                            row-area := TouchArea { mouse-cursor: pointer; clicked => { row-focus.focus(); Admin.selected = i; Admin.select-row(i); } }
+                                            row-focus := FocusScope {
+                                                width: 0px; height: 0px;
+                                                key-pressed(event) => {
+                                                    if (event.text == Key.Return || event.text == Key.Space) { Admin.selected = i; Admin.select-row(i); return accept; }
+                                                    return reject;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // ---- Appearances ----
+                            if root.p == "appearance": VerticalLayout {
+                                spacing: 22px;
+                                VerticalLayout {
+                                    spacing: 4px;
+                                    H1 { text: "Appearances"; }
+                                    Sub { text: "A picture behind the tap screen. The panels sit over it; set how see-through they are below. Their text always stays solid."; }
+                                }
+                                Panel {
+                                    title: "PREVIEW";
+                                    preview := Rectangle {
+                                        height: min(340px, self.width * 9 / 16);
+                                        background: Web.page;
+                                        border-width: 1px; border-color: Web.line; border-radius: 8px;
+                                        clip: true;
+                                        if Admin.has-preview: Image { width: parent.width; height: parent.height; source: Admin.preview; image-fit: cover; }
+                                        Rectangle {
+                                            x: parent.width * 5%; y: parent.height * 8%;
+                                            width: parent.width * 43%; height: parent.height * 84%;
+                                            background: #ffffff.with-alpha(Admin.panel-opacity / 100);
+                                            border-width: 1px; border-color: Web.line; border-radius: 8px;
+                                            Text { text: "Tap your ID"; color: Web.muted; font-weight: 700; font-size: 14px; }
+                                        }
+                                        Rectangle {
+                                            x: parent.width * 52%; y: parent.height * 8%;
+                                            width: parent.width * 43%; height: parent.height * 40%;
+                                            background: #ffffff.with-alpha(Admin.panel-opacity / 100);
+                                            border-width: 1px; border-color: Web.line; border-radius: 8px;
+                                            Text { y: 12px; text: "IN THE OFFICE"; color: Web.muted; font-size: 11px; font-weight: 700; }
+                                        }
+                                        Rectangle {
+                                            x: parent.width * 52%; y: parent.height * 52%;
+                                            width: parent.width * 43%; height: parent.height * 40%;
+                                            background: #ffffff.with-alpha(Admin.panel-opacity / 100);
+                                            border-width: 1px; border-color: Web.line; border-radius: 8px;
+                                            Text { y: 12px; text: "LEADERBOARD"; color: Web.muted; font-size: 11px; font-weight: 700; }
+                                        }
+                                        if !Admin.has-preview: Text { y: parent.height - 24px; text: "No picture yet"; color: Web.muted; font-size: 13px; }
+                                    }
+                                }
+                                Panel {
+                                    title: "PICTURE";
+                                    Label { text: "PNG, JPEG, WebP or GIF, up to 8 MB. Landscape works best."; }
+                                    HorizontalLayout {
+                                        alignment: start; spacing: 12px;
+                                        Btn { text: "Choose picture"; enabled: !Admin.busy; clicked => { Admin.action("image"); } }
+                                        if Admin.has-preview: Btn { text: "Remove picture"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("remove-image"); } }
+                                    }
+                                }
+                                Panel {
+                                    title: "PANEL OPACITY";
+                                    Label { text: "How solid the panels are (100% hides the picture behind them): " + round(Admin.panel-opacity) + "%"; }
+                                    HorizontalLayout {
+                                        spacing: 12px;
+                                        Slider { value <=> Admin.panel-opacity; minimum: 0; maximum: 100; step: 5; enabled: !Admin.busy; horizontal-stretch: 1; }
+                                        Btn { text: "Save opacity"; enabled: !Admin.busy; clicked => { Admin.action("appearance"); } }
+                                    }
+                                }
+                                Panel {
+                                    title: "LEADERBOARD";
+                                    Sub {
+                                        text: Admin.hidden-rankings
+                                            ? "Rankings are hidden on the tap screen. Show them when the results are posted."
+                                            : "Rankings are showing on the tap screen. Hide them for suspense before you post the results.";
+                                    }
+                                    HorizontalLayout {
+                                        alignment: start;
+                                        Btn {
+                                            text: Admin.hidden-rankings ? "Show rankings" : "Hide rankings";
+                                            kind: Admin.hidden-rankings ? "primary" : "ghost";
+                                            enabled: !Admin.busy;
+                                            clicked => { Admin.hidden-rankings = !Admin.hidden-rankings; Admin.action("appearance"); }
+                                        }
+                                    }
+                                }
+                                Panel {
+                                    title: "SEASON";
+                                    HorizontalLayout {
+                                        spacing: 12px; alignment: start;
+                                        VerticalLayout {
+                                            spacing: 5px; width: 220px;
+                                            Label { text: "Festive touches on the tap screen"; }
+                                            ComboBox {
+                                                model: ["Off", "Christmas"];
+                                                current-index: Admin.christmas ? 1 : 0;
+                                                enabled: !Admin.busy;
+                                                min-height: 38px;
+                                                selected => { Admin.christmas = self.current-index == 1; }
+                                            }
+                                        }
+                                        VerticalLayout { alignment: end; Btn { text: "Save season"; enabled: !Admin.busy; clicked => { Admin.action("appearance"); } } }
+                                    }
+                                    Text { text: "Christmas: red and green colours, a candy-cane stripe and a string of lights along the top. Nothing moves, so the Pi stays cool."; color: Web.muted; font-size: 13px; wrap: word-wrap; }
+                                }
+                            }
+
+                            // ---- System (native only: the web app has no backups page) ----
+                            if root.p == "system": VerticalLayout {
+                                spacing: 22px;
+                                VerticalLayout { spacing: 4px; H1 { text: "System"; } Sub { text: "Sheet sync, the database and backups."; } }
+                                Panel {
+                                    title: "STATUS";
+                                    Text { text: Admin.diagnostics; color: Web.ink; wrap: word-wrap; }
+                                    HorizontalLayout {
+                                        alignment: start; spacing: 12px;
+                                        if Admin.sync-enabled: Btn { text: "Sync now"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("sync"); } }
+                                        Btn { text: "Refresh"; kind: "ghost"; clicked => { Admin.action("system"); } }
+                                    }
+                                }
+                                Panel {
+                                    title: "BACKUPS";
+                                    Sub { text: "Restore replaces attendance and the roster. A backup of the current data is saved first."; }
+                                    HorizontalLayout {
+                                        alignment: start; spacing: 12px;
+                                        Btn { text: "Back up now"; enabled: !Admin.busy; clicked => { Admin.action("backup"); } }
+                                        Btn { text: "Choose backup to restore"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("restore"); } }
+                                    }
+                                }
+                            }
+
+                            // ---- Choosing a file ----
+                            if root.p == "files": VerticalLayout {
+                                spacing: 22px;
+                                H1 { text: Admin.file-title; }
+                                Panel {
+                                    HorizontalLayout {
+                                        spacing: 12px;
+                                        Field { label: "Folder"; text <=> Admin.folder; horizontal-stretch: 1; accepted => { Admin.action("folder"); } }
+                                        VerticalLayout { alignment: end; Btn { text: "Open folder"; kind: "ghost"; clicked => { Admin.action("folder"); } } }
+                                        VerticalLayout { alignment: end; Btn { text: "Up"; kind: "ghost"; clicked => { Admin.action("up"); } } }
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 12px; alignment: start;
+                                        Btn { text: "Backups"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("backup-folder"); } }
+                                        Btn { text: "USB drives"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("usb-folder"); } }
+                                    }
+                                    StandardListView {
+                                        height: 320px;
+                                        model: Admin.files;
+                                        current-item <=> Admin.file-selected;
+                                        current-item-changed(i) => { Admin.file-click(i); }
+                                    }
+                                    if Admin.files.length == 0: Sub { text: "No matching files in this folder."; }
+                                    Field { label: Admin.export-mode ? "New CSV filename" : "Selected file (or full path)"; text <=> Admin.filename; accepted => { Admin.action("choose-file"); } }
+                                    HorizontalLayout {
+                                        alignment: start; spacing: 12px;
+                                        Btn { text: Admin.export-mode ? "Save CSV" : "Choose file"; enabled: !Admin.busy; clicked => { Admin.action("choose-file"); } }
+                                        Btn { text: "Open selected folder"; kind: "ghost"; clicked => { Admin.action("open-folder"); } }
+                                        Btn { text: "Cancel"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("escape"); } }
+                                    }
+                                }
+                            }
+
+                            // ---- Restore ----
+                            if root.p == "restore": VerticalLayout {
+                                spacing: 22px;
+                                H1 { text: "Restore this backup?"; }
+                                Panel {
+                                    Text { text: Admin.restore-detail; color: Web.ink; wrap: word-wrap; }
+                                    Text { text: "Current data will be replaced, then synced to Sheets if enabled. The current database is backed up first."; color: Web.danger; wrap: word-wrap; }
+                                    HorizontalLayout {
+                                        alignment: start; spacing: 12px;
+                                        Btn { text: "Restore backup"; kind: "danger"; enabled: !Admin.busy; clicked => { Admin.action("confirm-restore"); } }
+                                        Btn { text: "Cancel"; kind: "ghost"; enabled: !Admin.busy; clicked => { Admin.action("escape"); } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

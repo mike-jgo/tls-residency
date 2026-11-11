@@ -1,6 +1,9 @@
-# PC validation, 2026-11-10
+# Historical tap-only client validation, 2026-11-10
 
-The native screen remains in development. The checked items in `../PLAN.md`
+This records the earlier HTTP client that required the Node server. It has since
+been replaced by the standalone app; see NATIVE-VALIDATION.md for current checks.
+
+The native screen was in development. The checked items in `../PLAN.md`
 describe Windows checks, not permission to deploy it to the Pi.
 
 ## Setup

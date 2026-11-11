@@ -6,7 +6,7 @@ product
 
 ## Users
 
-The LaSallian staffers tap an RFID card when arriving at or leaving the office. First-time staffers register at the shared office computer. Admins manage people and review residency hours on that computer or the office network.
+The LaSallian staffers tap an RFID card when arriving at or leaving the office. First-time staffers register at the shared office computer. Admins manage people and review residency hours locally in the native app on that computer.
 
 ## Product Purpose
 
@@ -30,4 +30,4 @@ Avoid decorative dashboards, unnecessary steps, ambiguous success messages, and 
 
 ## Accessibility & Inclusion
 
-Support keyboard operation, named form controls, clear focus, and screen-reader status announcements. Communicate status with words as well as color. Keep the layout usable on office monitors and mobile admin screens.
+Support keyboard operation, named form controls, clear focus, and screen-reader status announcements. Communicate status with words as well as color. Keep the layout usable on office monitors.
