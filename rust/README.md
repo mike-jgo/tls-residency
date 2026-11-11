@@ -88,18 +88,26 @@ with the labwc desktop) runs this app instead of the Node service and Chromium.
 | `data/residency.log`, `data/run.log` | App log; launcher log with exit codes |
 
 `~/.config/autostart/residency-native.desktop` runs `run.sh` at login, in the
-desktop session. `run.sh` sets `SLINT_BACKEND=winit-femtovg` (GPU); set
-`SLINT_BACKEND=winit-software` in its environment if drawing ever misbehaves.
+desktop session. `run.sh` sets `SLINT_BACKEND=winit-software`.
+
+Keep the software renderer on this Pi. Raspberry Pi OS runs labwc with
+`WLR_RENDERER=pixman` on a Pi 3, so the compositor itself draws in software.
+With `winit-femtovg` every app frame arrived as a full-screen GPU buffer that
+labwc had to read back: one 1920×1080 redraw cost labwc 1.1–1.5 s of CPU, and
+the blinking text cursor on Register pinned a core at ~98%. With
+`winit-software` the app sends ordinary memory with only the changed area, and
+the same redraw costs labwc 10–30 ms (measured 2026-11-11 across the clock's
+minute change). The app also uses less memory (63 MB instead of 94 MB).
 The Shut down button uses the existing `tlsadmin` sudoers rule for
 `/usr/bin/systemctl poweroff`.
 
 Measured at the switch, both idle on the tap screen with the same data:
 
-| | Node + Chromium | Native |
+| | Node + Chromium | Native (`winit-software`) |
 |---|---|---|
-| Memory (PSS) | ~375 MB | 93 MB |
-| CPU, 60 s idle sample | 8.9% of one core | 0.15% of one core |
-| Pi memory available | 367 MB | 494 MB |
+| Memory (PSS) | ~375 MB | 63 MB |
+| CPU, idle tap screen | 8.9% of one core | ~0% (labwc ~0%) |
+| Pi memory available | 367 MB | 524 MB |
 
 **Updating.** Build on CI rather than on the Pi. Swap the binary when nobody is
 checked in or at a quiet time; the database and settings stay as they are.

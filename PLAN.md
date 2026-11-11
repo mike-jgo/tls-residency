@@ -84,13 +84,17 @@ request, with 16 people checked in. Done at the switch:
 - First run with sync off showed the same 16 people, leaderboard and appearance.
   With sync on, the badge showed Synced. Same kernel boot ID, so open sessions
   carried over.
-- Starts at login, restarts on exit, `winit-femtovg` backend. Poweroff rule present.
+- Starts at login, restarts on exit. Poweroff rule present.
 - Idle footprint: 93 MB and 0.15% CPU, against ~375 MB and 8.9% for Node + Chromium.
+- Real use from 20:30: taps through the reader and a registration on the Pi work.
+- Backend: `winit-femtovg` made the Register screen pin a core in labwc (the Pi's
+  compositor renders with pixman, so each GPU frame was a ~1.3 s readback).
+  Switched to `winit-software` at 20:49: 10–30 ms per redraw, app at 63 MB. See
+  [rust/README.md](rust/README.md#on-the-office-pi).
 
-Still open on the Pi: a production card tap and reader timing, Register/Admin/
-Hours/backup-restore on the real screen, pressing Shut down, a cold boot and
-RTC/NTP readiness, Linux startup/shutdown backups, the twenty-input load
-measurement, and comparing `winit-femtovg` against `winit-software`/KMS. Rollback
+Still open on the Pi: Admin/Hours/backup-restore on the real screen, pressing
+Shut down, a cold boot and RTC/NTP readiness, Linux startup/shutdown backups, the
+twenty-input load measurement, and trying the KMS build (no compositor at all). Rollback
 steps are in [rust/README.md](rust/README.md#on-the-office-pi).
 
 ## UI basis
