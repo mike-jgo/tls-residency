@@ -1,0 +1,89 @@
+name: Pi build
+
+# Builds the native station app for the Raspberry Pi (64-bit ARM Linux) on a
+# native ARM runner, so no cross-compiler is needed. Download the result from
+# the run's "Artifacts" section and copy the binary to the Pi.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "rust/**"
+      - ".github/workflows/pi-build.yml"
+  pull_request:
+    paths:
+      - "rust/**"
+      - ".github/workflows/pi-build.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pi-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.variant }})
+    # Ubuntu 24.04's glibc (2.39) is older than Debian 13's (2.41), so the
+    # binary runs on the Pi's Raspberry Pi OS / Debian 13.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Default Slint backends (winit + femtovg/software) for a Pi desktop session.
+          - variant: desktop
+            features: ""
+          # Adds the LinuxKMS backend for a kiosk without a desktop session.
+          - variant: kms
+            features: "--features pi-kms"
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libfontconfig1-dev libfreetype-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libwayland-dev libegl1-mesa-dev libgl1-mesa-dev \
+            libudev-dev libinput-dev libgbm-dev libdrm-dev libseat-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          key: ${{ matrix.variant }}
+
+      - name: Build release binary
+        run: cargo build --release --locked ${{ matrix.features }}
+
+      - name: Show binary details
+        run: |
+          file target/release/tls-residency
+          ls -lh target/release/tls-residency
+          echo "Dynamic libraries the Pi must provide:"
+          ldd target/release/tls-residency || true
+
+      - name: Package
+        run: |
+          pkg="tls-residency-linux-arm64-${{ matrix.variant }}"
+          mkdir -p "dist/$pkg"
+          cp target/release/tls-residency README.md .env.example "dist/$pkg/"
+          cp assets/OFL.txt "dist/$pkg/OFL.txt"
+          tar -C dist -czf "dist/$pkg.tar.gz" "$pkg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tls-residency-linux-arm64-${{ matrix.variant }}
+          path: rust/dist/tls-residency-linux-arm64-${{ matrix.variant }}.tar.gz
+          retention-days: 30
