@@ -10,7 +10,6 @@ use chrono::{TimeZone, Utc};
 
 const HOUR: i64 = 3_600_000;
 const DAY: i64 = 24 * HOUR;
-const MAX: i64 = 10 * HOUR;
 const BOOT: &str = "boot";
 
 fn at(ms: i64) -> String {
@@ -22,7 +21,7 @@ fn ev(kind: &str, ms: i64) -> Event {
     Event { id: 0, user_id: 1, kind: kind.into(), ts: at(ms), boot_id: Some(BOOT.into()), request_id: None }
 }
 fn build(events: &[Event]) -> Vec<Session> {
-    sessions(events, BOOT, MAX)
+    sessions(events, BOOT)
 }
 fn total(s: &[Session]) -> i64 {
     s.iter().map(|s| s.ms).sum()
@@ -55,39 +54,17 @@ fn an_open_session_counts_as_zero_until_they_tap_out() {
     assert_eq!(total(&s), HOUR);
 }
 
-/// Forgetting to tap out costs you the session. It must not be worth the
-/// limit either: that would reward the mistake.
+/// The web app discards a session longer than MAX_SESSION_HOURS. The native
+/// app has no such limit: only a shutdown drops a check-in, so a check-out on
+/// the same boot closes the session and it counts in full however long it is.
 #[test]
-fn a_session_past_the_limit_is_discarded_not_capped() {
-    let s = build(&[ev("in", 0), ev("out", 3 * DAY)]);
-    assert!(s[0].invalid);
-    assert_eq!(s[0].ms, 0);
-    assert_eq!(total(&s), 0);
-}
-
-#[test]
-fn a_session_exactly_at_the_limit_still_counts_in_full() {
-    let s = build(&[ev("in", 0), ev("out", 10 * HOUR)]);
+fn a_long_session_counts_in_full() {
+    let s = build(&[ev("in", 0), ev("out", 12 * HOUR + 11 * 60_000)]);
     assert!(!s[0].invalid);
-    assert_eq!(hours(s[0].ms), 10.0);
-}
-
-#[test]
-fn a_session_just_past_the_limit_is_worth_nothing() {
-    let s = build(&[ev("in", 0), ev("out", 10 * HOUR + 1)]);
-    assert!(s[0].invalid);
-    assert_eq!(s[0].ms, 0);
-}
-
-#[test]
-fn one_discarded_session_does_not_affect_the_others() {
-    let s = build(&[
-        ev("in", 0), ev("out", 2 * HOUR),
-        ev("in", DAY), ev("out", DAY + 3 * DAY),
-        ev("in", 8 * DAY), ev("out", 8 * DAY + HOUR),
-    ]);
-    assert_eq!(hours(total(&s)), 3.0);
-    assert_eq!(s.iter().filter(|s| s.invalid).count(), 1);
+    assert_eq!(s[0].ms, 12 * HOUR + 11 * 60_000);
+    let s = build(&[ev("in", 0), ev("out", 3 * DAY)]);
+    assert!(!s[0].invalid);
+    assert_eq!(total(&s), 3 * DAY);
 }
 
 /// The shape a forgotten check-out leaves behind: two check-ins in a row.
@@ -138,7 +115,7 @@ fn report(events: &[(&str, i64)], start: Option<String>, end: Option<String>) ->
     for (kind, ms) in events {
         store.add_event(id, kind, &at(*ms), Some(BOOT), None).unwrap();
     }
-    store.report(BOOT, MAX, start.as_deref(), end.as_deref()).unwrap().remove(0)
+    store.report(BOOT, start.as_deref(), end.as_deref()).unwrap().remove(0)
 }
 
 #[test]
@@ -162,13 +139,6 @@ fn hours_are_rounded_to_two_decimals_for_the_report() {
     assert_eq!(report(&[("in", 0), ("out", HOUR)], None, None).hours, 1.0);
     assert_eq!(report(&[("in", 0), ("out", 90 * 60_000)], None, None).hours, 1.5);
     assert_eq!(report(&[("in", 0), ("out", HOUR / 3)], None, None).hours, 0.33);
-}
-
-/// Web: "the limit the scanner uses is the same one the totals use". Natively
-/// both take Config::max_session_ms; the default is 12 hours, as on the Pi.
-#[test]
-fn the_default_session_limit_is_the_pis() {
-    assert!(include_str!("config.rs").contains("get(\"MAX_SESSION_HOURS\", \"12\")"));
 }
 
 // ---- The report: CSV and leaderboards (web/test/report.test.js) ----------
@@ -268,7 +238,7 @@ fn dummy_staffers_are_left_out_of_the_report_so_out_of_every_total() {
             .create(&Person { name: name.into(), student_id: card.into(), section: "Web".into(), status: status.into(), telegram: String::new() }, card, true)
             .unwrap();
     }
-    let names: Vec<_> = store.report(BOOT, MAX, None, None).unwrap().into_iter().map(|r| r.name).collect();
+    let names: Vec<_> = store.report(BOOT, None, None).unwrap().into_iter().map(|r| r.name).collect();
     assert_eq!(names, ["Ana Cruz"]);
 }
 

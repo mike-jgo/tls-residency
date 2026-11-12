@@ -297,7 +297,6 @@ impl Store {
     pub fn report(
         &self,
         boot: &str,
-        max_ms: i64,
         start: Option<&str>,
         end: Option<&str>,
     ) -> Result<Vec<ReportRow>> {
@@ -336,7 +335,7 @@ impl Store {
                         ts: record.get("next_ts")?, boot_id: record.get("next_boot")?, request_id: None,
                     });
                 }
-                grouped.last_mut().unwrap().1.push(model::sessions(&pair, boot, max_ms).remove(0));
+                grouped.last_mut().unwrap().1.push(model::sessions(&pair, boot).remove(0));
             }
         }
         let mut rows = vec![];
@@ -459,7 +458,7 @@ mod tests {
             .unwrap();
         assert_eq!(store.currently_in("a").unwrap().len(), 1);
         assert!(store.currently_in("b").unwrap().is_empty());
-        let report = store.report("b", 36_000_000, None, None).unwrap();
+        let report = store.report("b", None, None).unwrap();
         assert_eq!(report[0].uncounted.len(), 1);
         assert_eq!(report[0].hours, 0.0);
         store.set_active(id, false).unwrap();
@@ -481,7 +480,7 @@ mod tests {
     fn range_query_matches_full_history_sessions_including_boundary_checkouts() {
         let store = Store::memory().unwrap();
         let id = store.create(&p(), "1", true).unwrap();
-        // Historical checkout, abandoned arrival, overlong session, reversed
+        // Historical checkout, abandoned arrival, day-long session, reversed
         // clock, and a session spanning the requested upper boundary.
         for (kind, ts, boot) in [
             ("in", "2025-12-31T23:00:00.000Z", "old"),
@@ -502,9 +501,9 @@ mod tests {
             (Some("2026-02-01T00:00:00.000Z"), None),
             (None, Some("2026-01-01T00:00:00.000Z")),
         ] {
-            let report = store.report("boot", 36_000_000, start, end).unwrap();
+            let report = store.report("boot", start, end).unwrap();
             for row in report {
-                let expected: Vec<_> = model::sessions(&store.events_for(row.user_id).unwrap(), "boot", 36_000_000)
+                let expected: Vec<_> = model::sessions(&store.events_for(row.user_id).unwrap(), "boot")
                     .into_iter().filter(|s| start.is_none_or(|a| s.in_at.as_str() >= a)
                         && end.is_none_or(|b| s.in_at.as_str() < b)).collect();
                 assert_eq!(row.hours, (expected.iter().map(|s| s.ms).sum::<i64>() as f64 / 36_000.0).round() / 100.0);

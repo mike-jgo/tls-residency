@@ -85,7 +85,6 @@ mod tests {
                 admin_user: "admin".into(),
                 admin_password: "secret".into(),
                 dates: dates::Dates::new("Asia/Manila").unwrap(),
-                max_session_ms: 36_000_000,
             }
         }
     }
@@ -459,7 +458,6 @@ mod tests {
                 &worker.store,
                 &worker.boot_id,
                 worker.config.dates,
-                worker.config.max_session_ms,
             )
         });
         wait.recv_timeout(Duration::from_secs(3)).unwrap();
@@ -624,7 +622,6 @@ impl Core {
             model::leaderboards(
                 &s.report(
                     &self.boot_id,
-                    self.config.max_session_ms,
                     Some(&start),
                     Some(&end),
                 )?,
@@ -723,19 +720,23 @@ impl Core {
                 card,
                 &self.boot_id,
                 self.clock.load(Ordering::Relaxed),
-                self.config.max_session_ms,
                 &dates::now(),
                 self.started.elapsed().as_millis() as u64,
             )?
         };
         self.log(&format!(
-            "{} {} {}",
+            "{} {} {}{}",
             tap.status,
             tap.direction,
             if tap.name.is_empty() {
                 &tap.rfid
             } else {
                 &tap.name
+            },
+            if tap.stale {
+                "   (previous check-in was never closed — it counts as zero)"
+            } else {
+                ""
             }
         ));
         if tap.status == "ok" {
@@ -947,7 +948,6 @@ impl Core {
         let (a, b) = self.config.dates.bounds(start, end)?;
         self.store.lock().expect("database mutex poisoned").report(
             &self.boot_id,
-            self.config.max_session_ms,
             a.as_deref(),
             b.as_deref(),
         )
@@ -1209,7 +1209,6 @@ impl Core {
                 &self.store,
                 &self.boot_id,
                 self.config.dates,
-                self.config.max_session_ms,
             );
             *self.notes.lock().expect("roster notes mutex poisoned") = sync.notes.clone();
             result

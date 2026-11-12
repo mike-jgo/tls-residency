@@ -30,7 +30,6 @@ Copy `.env.example` to `.env` and set `ADMIN_PASSWORD` before office use.
 | `ADMIN_USER` | `admin` | Local Admin username |
 | `ADMIN_PASSWORD` | `changeme` | Local Admin password |
 | `TZ` | `Asia/Manila` | Display, report and Sheets timezone, independent of host zone |
-| `MAX_SESSION_HOURS` | `12` | Longer sessions earn zero hours; late taps start fresh arrivals. 12 matches the deployed Pi |
 | `SHEETS_SPREADSHEET_ID` | empty | Sheet ID or URL; empty explicitly disables all sync |
 | `GOOGLE_SERVICE_ACCOUNT_KEY` | `data/service-account.json` | Service-account JSON key |
 | `STATION_FULLSCREEN` | `0` | `1` fills the screen |
@@ -133,6 +132,14 @@ cd ~/tls-residency-native && XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayl
 
 (Logging out and back in, or rebooting, also starts it. A reboot ends everyone's
 open session, so only reboot when nobody is checked in.)
+
+**Sessions have no length limit.** A check-in stays open until the person taps
+again or the Pi shuts down, however long that takes; restarting just the app
+keeps it open. A check-in from before a shutdown or reboot counts as zero, and
+the person's next tap is an arrival, logged with `(previous check-in was never
+closed — it counts as zero)`. So shut the Pi down at the end of each day: if it
+stays on overnight, a check-in nobody closed becomes a session that lasts until
+the next morning's tap. `MAX_SESSION_HOURS` is no longer read.
 
 **Rolling back to Node.** The old installation is untouched in `~/tls-residency`
 at commit `d95e968`. Do not `git pull` there: master keeps Node in `web/`, and

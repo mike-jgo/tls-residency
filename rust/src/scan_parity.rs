@@ -10,6 +10,8 @@
 //   - The web result also says whether a stale check-in was measured with
 //     certainty. The native Tap has no such field, so those assertions are
 //     left out; the direction and staleness they guard are still checked.
+//   - The web app drops a check-in older than MAX_SESSION_HOURS. The native
+//     app has no such limit, so those tests are replaced (see Long check-ins).
 
 use crate::{
     dates,
@@ -21,8 +23,6 @@ use chrono::{TimeZone, Utc};
 
 const SECOND: i64 = 1000;
 const HOUR: i64 = 3_600_000;
-// The same 10-hour limit the web tests pin.
-const MAX_MS: i64 = 10 * HOUR;
 // web/lib/scan.js REPEAT_IGNORE_MS and UNKNOWN_KEEP.
 const REPEAT_IGNORE_MS: i64 = 5000;
 const UNKNOWN_KEEP: usize = 20;
@@ -111,7 +111,7 @@ impl World {
     fn tap_unseen(&mut self, card: &str) -> model::Tap {
         let now = self.now();
         self.scanner
-            .tap(&self.store, card, &self.boot, self.ready, MAX_MS, &now, self.elapsed as u64)
+            .tap(&self.store, card, &self.boot, self.ready, &now, self.elapsed as u64)
             .unwrap()
     }
     /// A tap as the screen makes it: shown, then acknowledged.
@@ -212,7 +212,7 @@ fn a_failed_database_write_does_not_swallow_an_immediate_retry() {
     let card = w.register("Retry after disk failure");
     w.store.db.execute_batch("CREATE TRIGGER fail_tap BEFORE INSERT ON events BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END;").unwrap();
     let now = w.now();
-    assert!(w.scanner.tap(&w.store, &card, BOOT, true, MAX_MS, &now, 0).is_err());
+    assert!(w.scanner.tap(&w.store, &card, BOOT, true, &now, 0).is_err());
     assert!(w.store.events().unwrap().is_empty());
     assert!(w.store.pending_cards().unwrap().is_empty(), "receipt creation rolls back too");
     w.store.db.execute_batch("DROP TRIGGER fail_tap").unwrap();
@@ -310,50 +310,37 @@ fn the_window_is_per_card_so_two_people_tapping_together_both_register() {
     assert_eq!(w.handle(&two).direction, "in");
 }
 
-// ---- Stale check-ins -----------------------------------------------------
+// ---- Long check-ins --------------------------------------------------------
+// Unlike the web app, the native scanner has no session-length limit: only a
+// shutdown (a new boot) drops an open check-in. However long someone has been
+// checked in on this boot, their next tap checks them out.
 
+/// 11/11: checked in at 09:19:37 and tapped at 21:30:35, 12 h 11 min later.
+/// Under the old 12-hour limit that tap was a second arrival.
 #[test]
-fn an_arrival_after_a_forgotten_check_out_checks_them_in_not_out() {
+fn a_check_out_after_more_than_twelve_hours_is_still_a_check_out() {
     let mut w = World::new();
     let card = w.register("Mika");
     w.tap(&card);
-    w.advance(20 * HOUR);
+    w.advance(12 * HOUR + 11 * 60 * SECOND);
     let result = w.handle(&card);
-    assert_eq!(result.direction, "in");
-    assert!(result.stale);
+    assert_eq!(result.direction, "out");
+    assert!(!result.stale);
+    let sessions = model::sessions(&w.store.events_for(w.id(&card)).unwrap(), BOOT);
+    assert_eq!(sessions.len(), 1);
+    assert!(!sessions[0].invalid);
+    assert_eq!(sessions[0].ms, 12 * HOUR + 11 * 60 * SECOND);
 }
 
 #[test]
-fn the_sequence_recovers_the_tap_after_a_stale_arrival_is_a_check_out() {
+fn a_check_in_left_open_all_day_on_the_same_boot_is_still_checked_out() {
     let mut w = World::new();
     let card = w.register("Noel");
     w.tap(&card);
-    w.advance(20 * HOUR);
-    w.handle(&card);
-    w.advance(3 * HOUR);
+    w.advance(30 * HOUR);
     let result = w.handle(&card);
     assert_eq!(result.direction, "out");
     assert!(!result.stale);
-}
-
-#[test]
-fn a_genuine_long_day_still_taps_out_at_exactly_the_limit() {
-    let mut w = World::new();
-    let card = w.register("Ofel");
-    w.tap(&card);
-    w.advance(10 * HOUR);
-    let result = w.handle(&card);
-    assert_eq!(result.direction, "out");
-    assert!(!result.stale);
-}
-
-#[test]
-fn a_check_in_one_millisecond_past_the_limit_is_stale() {
-    let mut w = World::new();
-    let card = w.register("Pia");
-    w.tap(&card);
-    w.advance(10 * HOUR + 1);
-    assert!(w.handle(&card).stale);
 }
 
 #[test]
@@ -362,6 +349,7 @@ fn staleness_applies_only_to_an_open_check_in_never_to_a_check_out() {
     let card = w.register("Quin");
     w.tap(&card);
     w.tap(&card);
+    w.reboot("boot-tuesday");
     w.advance(30 * HOUR);
     let result = w.handle(&card);
     assert_eq!(result.direction, "in");
@@ -369,78 +357,46 @@ fn staleness_applies_only_to_an_open_check_in_never_to_a_check_out() {
 }
 
 #[test]
-fn a_backwards_clock_does_not_make_a_check_in_look_stale() {
+fn clock_jumps_do_not_make_a_check_in_look_stale() {
     let mut w = World::new();
     let card = w.register("Rex");
     w.tap(&card);
     w.jump_clock(-30 * HOUR);
     w.advance(HOUR);
-    let result = w.handle(&card);
-    assert_eq!(result.direction, "out");
-    assert!(!result.stale);
-}
-
-/// The regression this section exists for: a check-in recorded before NTP
-/// corrects the clock, and a tap after it, are hours apart on the wall clock
-/// while barely any real time has passed.
-#[test]
-fn a_forwards_clock_correction_does_not_turn_a_departure_into_an_arrival() {
-    let mut w = World::new();
-    let card = w.register("Yuki");
+    assert_eq!(w.handle(&card).direction, "out");
     w.tap(&card);
     w.advance(HOUR);
     w.jump_clock(24 * HOUR);
     let result = w.handle(&card);
     assert_eq!(result.direction, "out", "a departure must stay a departure");
     assert!(!result.stale);
-    assert_eq!(w.types(&card), ["in", "out"]);
-    assert!(!w.is_in(BOOT, &card), "they went home");
 }
 
 #[test]
-fn a_forwards_correction_does_not_delay_a_genuinely_stale_check_in_either() {
-    let mut w = World::new();
-    let card = w.register("Zane");
-    w.tap(&card);
-    w.advance(20 * HOUR);
-    w.jump_clock(-3 * HOUR);
-    assert!(w.handle(&card).stale);
-}
-
-#[test]
-fn after_a_restart_the_age_comes_from_the_stored_timestamp() {
+fn an_app_restart_keeps_a_check_in_open_however_long_ago_it_was() {
     let mut w = World::new();
     let card = w.register("Adel");
     w.tap(&card);
     w.restart();
     w.advance(20 * HOUR);
     let result = w.handle(&card);
-    assert_eq!(result.direction, "in");
-    assert!(result.stale);
+    assert_eq!(result.direction, "out");
+    assert!(!result.stale);
 }
 
-#[test]
-fn a_restart_does_not_by_itself_make_a_recent_check_in_look_stale() {
-    let mut w = World::new();
-    let card = w.register("Bex");
-    w.tap(&card);
-    w.restart();
-    w.advance(2 * HOUR);
-    assert_eq!(w.handle(&card).direction, "out");
-}
-
-/// End to end: before the stale rule, the second day's arrival was recorded
-/// as a check-out, and every tap after it was inverted too.
+/// End to end: a check-in left open at shutdown costs that session and
+/// nothing else; the next day's taps are not inverted.
 #[test]
 fn a_forgotten_check_out_costs_that_session_and_nothing_else() {
     let mut w = World::new();
     let card = w.register("Sam");
     w.tap(&card);
+    w.reboot("boot-tuesday");
     w.advance(20 * HOUR);
-    w.handle(&card);
+    assert!(w.handle(&card).stale);
     w.advance(4 * HOUR);
     w.handle(&card);
-    let sessions = model::sessions(&w.store.events_for(w.id(&card)).unwrap(), BOOT, MAX_MS);
+    let sessions = model::sessions(&w.store.events_for(w.id(&card)).unwrap(), "boot-tuesday");
     assert_eq!(sessions.iter().map(|s| s.invalid).collect::<Vec<_>>(), [true, false]);
     assert_eq!(sessions.iter().map(|s| s.ms).sum::<i64>(), 4 * HOUR);
     assert_eq!(w.store.last_event(w.id(&card)).unwrap().unwrap().kind, "out");
@@ -501,9 +457,9 @@ fn the_report_flags_a_check_in_left_open_at_shutdown_and_counts_it_as_zero() {
     let card = w.register("Gus");
     w.tap(&card);
     let events = w.store.events_for(w.id(&card)).unwrap();
-    let monday = model::sessions(&events, BOOT, MAX_MS);
+    let monday = model::sessions(&events, BOOT);
     assert_eq!(monday.iter().map(|s| (s.open, s.invalid)).collect::<Vec<_>>(), [(true, false)], "still in on Monday");
-    let later = model::sessions(&events, "boot-thursday", MAX_MS);
+    let later = model::sessions(&events, "boot-thursday");
     assert_eq!(later.iter().map(|s| (s.open, s.invalid)).collect::<Vec<_>>(), [(true, true)], "abandoned after shutdown");
     assert_eq!(later.iter().map(|s| s.ms).sum::<i64>(), 0);
 }

@@ -1,5 +1,4 @@
 use crate::{
-    dates,
     model::{valid_card, Tap},
     store::Store,
     Result,
@@ -9,7 +8,6 @@ use std::{collections::HashMap, time::Instant};
 #[derive(Default)]
 pub struct Scanner {
     repeats: HashMap<String, u64>,
-    check_ins: HashMap<i64, (i64, u64)>,
     pub unknown: Vec<(String, String)>,
 }
 impl Scanner {
@@ -22,7 +20,6 @@ impl Scanner {
         card: &str,
         boot: &str,
         clock_ready: bool,
-        max_ms: i64,
         now: &str,
         mono: u64,
     ) -> Result<Tap> {
@@ -31,7 +28,6 @@ impl Scanner {
                 "Tap the card reader, or enter a card number containing 1 to 64 digits.".into(),
             );
         }
-        let mut next_check_in = None;
         let tap = store.transaction(|s| {
             let receipt = s.pending_receipt(card)?;
             let base = |status: &str| Tap {
@@ -76,27 +72,18 @@ impl Scanner {
                 });
             }
             let last = s.last_event(person.id)?;
-            let stale = last.as_ref().is_some_and(|e| {
-                e.kind == "in"
-                    && (e.boot_id.as_deref() != Some(boot) || {
-                        let age = self
-                            .check_ins
-                            .get(&person.id)
-                            .filter(|(event_id, _)| *event_id == e.id)
-                            .map(|(_, since)| mono.saturating_sub(*since) as i64)
-                            .unwrap_or_else(|| {
-                                dates::millis(now).unwrap_or(0) - dates::millis(&e.ts).unwrap_or(0)
-                            });
-                        age > max_ms
-                    })
-            });
+            // A check-in only goes stale at a shutdown: one from an earlier
+            // boot was never tapped out. However long a check-in has been
+            // open on this boot, the next tap checks the person out.
+            let stale = last
+                .as_ref()
+                .is_some_and(|e| e.kind == "in" && e.boot_id.as_deref() != Some(boot));
             let direction = if stale || last.as_ref().is_none_or(|e| e.kind == "out") {
                 "in"
             } else {
                 "out"
             };
-            let event_id = s.add_event(person.id, direction, now, Some(boot), Some(&receipt))?;
-            next_check_in = Some((person.id, event_id, direction == "in"));
+            s.add_event(person.id, direction, now, Some(boot), Some(&receipt))?;
             Ok(Tap {
                 status: "ok".into(),
                 direction: direction.into(),
@@ -114,13 +101,6 @@ impl Scanner {
             self.forget_unknown(card);
             self.unknown.insert(0, (card.into(), now.into()));
             self.unknown.truncate(20);
-        }
-        if let Some((id, event_id, is_in)) = next_check_in {
-            if is_in {
-                self.check_ins.insert(id, (event_id, mono));
-            } else {
-                self.check_ins.remove(&id);
-            }
         }
         Ok(tap)
     }
@@ -225,7 +205,6 @@ mod tests {
                 "001",
                 "boot",
                 true,
-                36_000_000,
                 "2026-01-05T01:00:00.000Z",
                 0,
             )
@@ -237,7 +216,6 @@ mod tests {
                 "001",
                 "boot",
                 true,
-                36_000_000,
                 "2026-01-05T02:00:00.000Z",
                 0,
             )
@@ -252,7 +230,6 @@ mod tests {
                 "001",
                 "boot",
                 true,
-                36_000_000,
                 "2026-01-05T02:00:00.000Z",
                 6000,
             )
@@ -268,7 +245,6 @@ mod tests {
                 "001",
                 "boot",
                 false,
-                36_000_000,
                 "2026-01-05T01:00:00.000Z",
                 0,
             )
@@ -281,7 +257,6 @@ mod tests {
                 "001",
                 "boot",
                 true,
-                36_000_000,
                 "2026-01-05T01:00:00.000Z",
                 1,
             )
@@ -293,7 +268,6 @@ mod tests {
                 "001",
                 "boot",
                 true,
-                36_000_000,
                 "2026-01-06T01:00:00.000Z",
                 1000,
             )
@@ -311,7 +285,6 @@ mod tests {
                 "001",
                 "new",
                 true,
-                36_000_000,
                 "2026-01-05T02:00:00.000Z",
                 0,
             )

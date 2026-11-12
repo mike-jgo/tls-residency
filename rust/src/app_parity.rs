@@ -106,7 +106,6 @@ impl Fixture {
             admin_user: "admin".into(),
             admin_password: password.into(),
             dates: dates::Dates::new("Asia/Manila").unwrap(),
-            max_session_ms: 36_000_000,
         };
         let (core, _) = Core::with_sync(config, None, false).unwrap();
         core.clock.store(true, Ordering::Relaxed);

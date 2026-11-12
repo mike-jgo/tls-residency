@@ -111,7 +111,7 @@ pub struct Session {
     pub invalid: bool,
 }
 
-pub fn sessions(events: &[Event], boot_id: &str, max_ms: i64) -> Vec<Session> {
+pub fn sessions(events: &[Event], boot_id: &str) -> Vec<Session> {
     let mut rows = Vec::new();
     let mut open: Option<&Event> = None;
     let abandoned = |e: &Event| Session {
@@ -131,7 +131,7 @@ pub fn sessions(events: &[Event], boot_id: &str, max_ms: i64) -> Vec<Session> {
             let duration = crate::dates::millis(&event.ts)
                 .zip(crate::dates::millis(&previous.ts))
                 .map(|(end, start)| end - start);
-            let invalid = duration.is_none_or(|d| d > max_ms);
+            let invalid = duration.is_none();
             rows.push(Session {
                 in_at: previous.ts.clone(),
                 out_at: Some(event.ts.clone()),
@@ -310,24 +310,25 @@ mod tests {
             .all(|s| s.hours == 0.0 && !s.hours.is_sign_negative()));
     }
     #[test]
-    fn abandoned_and_overlong_sessions_never_earn_hours() {
+    fn abandoned_sessions_earn_nothing_and_long_ones_count_in_full() {
         let rows = sessions(
             &[
                 event(1, "in", "2026-01-05T01:00:00.000Z", "a"),
                 event(2, "in", "2026-01-06T01:00:00.000Z", "b"),
-                event(3, "out", "2026-01-06T12:00:00.000Z", "b"),
+                event(3, "out", "2026-01-06T13:11:00.000Z", "b"),
             ],
             "b",
-            36_000_000,
         );
         assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|r| r.invalid && r.ms == 0));
+        assert!(rows[0].invalid && rows[0].ms == 0);
+        assert!(!rows[1].invalid);
+        assert_eq!(rows[1].ms, (12 * 60 + 11) * 60_000);
     }
     #[test]
     fn boot_identity_determines_whether_an_open_session_is_live() {
         let events = [event(1, "in", "2026-01-05T01:00:00.000Z", "a")];
-        assert!(!sessions(&events, "a", 36_000_000)[0].invalid);
-        assert!(sessions(&events, "b", 36_000_000)[0].invalid);
+        assert!(!sessions(&events, "a")[0].invalid);
+        assert!(sessions(&events, "b")[0].invalid);
     }
     #[test]
     fn form_validation_preserves_leading_zeroes_and_normalizes_handles() {

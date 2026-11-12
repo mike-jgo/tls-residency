@@ -28,7 +28,6 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Mutex};
 
 const BOOT: &str = "boot-today";
-const MAX_MS: i64 = 36_000_000;
 const TAPS: [&str; 6] = ["Tap #", "Date", "Time", "Name", "Student ID", "Direction"];
 
 /// Manila is UTC+8: 09:00 there is 01:00Z.
@@ -100,7 +99,7 @@ impl World {
         self.run_boot(sync, BOOT)
     }
     fn run_boot(&self, sync: &mut Sync, boot: &str) -> Result<(), sheets::Error> {
-        sync.run(&self.store, boot, manila(), MAX_MS)
+        sync.run(&self.store, boot, manila())
     }
     /// Sync once with a new process, as most web tests do.
     fn sync_at(&self, sheet: &mut Sheet, now: &str) -> Sync {

@@ -11,17 +11,12 @@ pub struct Config {
     pub admin_user: String,
     pub admin_password: String,
     pub dates: Dates,
-    pub max_session_ms: i64,
 }
 impl Config {
     pub fn from_env() -> Result<Self> {
         let _ = dotenvy::dotenv();
         let get = |key: &str, default: &str| std::env::var(key).unwrap_or_else(|_| default.into());
         let data = PathBuf::from(get("DATA_DIR", "data"));
-        let hours: f64 = get("MAX_SESSION_HOURS", "12").parse()?;
-        if !hours.is_finite() || hours <= 0.0 || hours > 8760.0 {
-            return Err("MAX_SESSION_HOURS must be a positive number no greater than 8760.".into());
-        }
         let spreadsheet_id = spreadsheet_id_from(&get("SHEETS_SPREADSHEET_ID", ""));
         if !spreadsheet_id
             .bytes()
@@ -50,7 +45,6 @@ impl Config {
             admin_user: get("ADMIN_USER", "admin"),
             admin_password: get("ADMIN_PASSWORD", "changeme"),
             dates: Dates::new(&get("TZ", "Asia/Manila"))?,
-            max_session_ms: (hours * 3_600_000.0).round() as i64,
         })
     }
 }

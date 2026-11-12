@@ -104,7 +104,6 @@ mod tests {
             &store,
             "boot",
             Dates::new("Asia/Manila").unwrap(),
-            36_000_000,
         )
         .unwrap();
         let s = store.lock().unwrap();
@@ -136,7 +135,6 @@ mod tests {
                 &store,
                 "boot",
                 Dates::new("Asia/Manila").unwrap(),
-                36_000_000
             )
             .is_err());
         assert_eq!(store.lock().unwrap().watermark().unwrap(), 0);
@@ -144,7 +142,6 @@ mod tests {
             &store,
             "boot",
             Dates::new("Asia/Manila").unwrap(),
-            36_000_000,
         )
         .unwrap();
         let state = fake.0.lock().unwrap();
@@ -181,7 +178,6 @@ mod tests {
                 &store,
                 "boot",
                 Dates::new("Asia/Manila").unwrap(),
-                36_000_000
             )
             .is_err());
         let s = store.lock().unwrap();
@@ -221,7 +217,6 @@ mod tests {
             &store,
             "boot",
             Dates::new("Asia/Manila").unwrap(),
-            36_000_000,
         )
         .unwrap();
         let s = store.lock().unwrap();
@@ -547,12 +542,11 @@ impl Sync {
         store: &Mutex<Store>,
         boot: &str,
         dates: Dates,
-        max_ms: i64,
         all_months: bool,
     ) -> Result<bool> {
         let now = (self.clock)();
         let (current_y, current_m) = dates.month(&now).map_err(Error::local)?;
-        let (pending, from_top, height, first, last) = db(store, |s| {
+        let (pending, opened, from_top, height, first, last) = db(store, |s| {
             let events = s.events()?;
             let mark = s.watermark()?;
             let pending = events
@@ -561,8 +555,22 @@ impl Sync {
                 .take(2000)
                 .cloned()
                 .collect::<Vec<_>>();
+            // When each pending check-out's check-in was: a session counts in
+            // the month it began, so a month-end check-out refreshes that month.
+            let mut latest: HashMap<i64, &Event> = HashMap::new();
+            let mut opened = vec![];
+            let upto = pending.last().map_or(mark, |e| e.id);
+            for e in &events {
+                if e.id > mark && e.id <= upto && e.kind == "out" {
+                    if let Some(prior) = latest.get(&e.user_id).filter(|p| p.kind == "in") {
+                        opened.push(prior.ts.clone());
+                    }
+                }
+                latest.insert(e.user_id, e);
+            }
             Ok((
                 pending,
+                opened,
                 s.meta("sync_full")?.as_deref() == Some("1"),
                 s.users()?.len().max(1),
                 events.iter().map(|e| e.ts.clone()).min(),
@@ -580,16 +588,9 @@ impl Sync {
             let (y, m) = dates.month(&e.ts).map_err(Error::local)?;
             months.insert((y, m));
             log_titles.insert(format!("{} Logs", Dates::title(y, m)));
-            let start = dates.month_bounds(y, m).map_err(Error::local)?.0;
-            if e.kind == "out"
-                && dates::millis(&e.ts).unwrap_or(0) - dates::millis(&start).unwrap_or(0) <= max_ms
-            {
-                let prior = dates::iso(
-                    chrono::DateTime::from_timestamp_millis(dates::millis(&start).unwrap() - 1)
-                        .unwrap(),
-                );
-                months.insert(dates.month(&prior).map_err(Error::local)?);
-            }
+        }
+        for ts in &opened {
+            months.insert(dates.month(ts).map_err(Error::local)?);
         }
         let data = db(store, |s| {
             let mut out = Self::log_ranges(s, &pending, dates)?;
@@ -599,7 +600,7 @@ impl Sync {
                 let title = sheets::quote(&Dates::title(y, m));
                 let (start, end) = dates.month_bounds(y, m)?;
                 let rows = s
-                    .report(boot, max_ms, Some(&start), Some(&end))?
+                    .report(boot, Some(&start), Some(&end))?
                     .iter()
                     .filter(|r| r.active || r.any)
                     .map(Self::hours_row)
@@ -635,7 +636,7 @@ impl Sync {
                 sheets::strings(&sheet_layout::HOURS_HEADER),
             ];
             totals.extend(Self::pad(
-                s.report(boot, max_ms, None, None)?
+                s.report(boot, None, None)?
                     .iter()
                     .map(Self::hours_row)
                     .collect(),
@@ -752,9 +753,8 @@ impl Sync {
         store: &Mutex<Store>,
         boot: &str,
         dates: Dates,
-        max_ms: i64,
     ) -> Result<()> {
-        let result = self.run_inner(store, boot, dates, max_ms);
+        let result = self.run_inner(store, boot, dates);
         if result.is_err() {
             self.refresh = true;
         }
@@ -765,7 +765,6 @@ impl Sync {
         store: &Mutex<Store>,
         boot: &str,
         dates: Dates,
-        max_ms: i64,
     ) -> Result<()> {
         let (from_top, target) = db(store, |s| {
             Ok((
@@ -802,11 +801,11 @@ impl Sync {
             pulled_now = true;
             all = true;
         }
-        while self.upload(store, boot, dates, max_ms, all)? {
+        while self.upload(store, boot, dates, all)? {
             all = false;
         }
         if !pulled_now && self.pull_roster(store)?.changed() {
-            self.upload(store, boot, dates, max_ms, true)?;
+            self.upload(store, boot, dates, true)?;
         }
         if self.relabel {
             let ranges = db(store, |s| {

@@ -158,7 +158,7 @@ fn native_keyboard_drafts_forms_and_shutdown() {
             db_path: dir.join("residency.db"), backup_dir: dir.join("backups"), backup_keep: 60,
             key_file: dir.join("unused.json"), spreadsheet_id: String::new(),
             admin_user: "admin".into(), admin_password: "secret".into(),
-            dates: dates::Dates::new("Asia/Manila").unwrap(), max_session_ms: 43_200_000,
+            dates: dates::Dates::new("Asia/Manila").unwrap(),
         };
         let (core, _) = Core::start(config).unwrap();
         let ui = AppWindow::new().unwrap();

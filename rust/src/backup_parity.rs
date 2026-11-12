@@ -29,7 +29,6 @@ impl Fixture {
             admin_user: "admin".into(),
             admin_password: "secret".into(),
             dates: dates::Dates::new("Asia/Manila").unwrap(),
-            max_session_ms: 36_000_000,
         }
     }
     fn core(&self, keep: usize) -> Arc<Core> {

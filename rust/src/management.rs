@@ -527,7 +527,7 @@ impl App {
                     "\nNot counted: {} · {}",
                     self.core.config.dates.full(&s.in_at),
                     if s.out_at.is_some() {
-                        "invalid or overlong session"
+                        "invalid session"
                     } else {
                         "no tap out"
                     }
