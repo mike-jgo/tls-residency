@@ -199,8 +199,8 @@ Typing into management forms never records attendance.
 Tab reaches navigation links and Hours rows; Enter or Space activates them.
 Shutdown keeps focus on its two actions, starting on Cancel, and Escape closes it.
 Success and error notices stay above the scrolling page. Register and Admin
-have 44px-high touch targets. The station's background hides the pointer while
-action controls keep their pointer cursor. The minimum window remains
+have 44px-high touch targets. The mouse pointer stays visible on the station,
+and action controls show a pointer cursor. The minimum window remains
 1000×660 logical pixels; confirm the office monitor's resolution and scaling
 before installation.
 

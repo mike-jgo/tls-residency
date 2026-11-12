@@ -188,7 +188,6 @@ export component AppWindow inherits Window {
             if (root.key(event.text, event.modifiers.control || event.modifiers.alt || event.modifiers.meta)) { return accept; }
             return reject;
         }
-    TouchArea { mouse-cursor: none; }
     if root.has-background: Image {
         width: parent.width; height: parent.height;
         source: root.picture; image-fit: cover;
