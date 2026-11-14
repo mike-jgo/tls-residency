@@ -1,5 +1,5 @@
 // The machine the app runs on: which boot this is, whether the clock can be
-// trusted yet, and switching off. Mirrors web/lib/machine.js, split the same
+// trusted yet, and switching off. Mirrors legacy/lib/machine.js, split the same
 // way so each part can be tested without the real files and commands.
 
 use crate::{dates, Result};
@@ -188,7 +188,7 @@ pub fn shutdown() -> Result<()> {
     Ok(())
 }
 
-// web/test/machine.test.js, ported. The web's polling loop lives in core.rs
+// legacy/test/machine.test.js, ported. The web's polling loop lives in core.rs
 // natively (a thread that checks every two seconds until ready, then stops),
 // so its two async tests become single checks here.
 #[cfg(test)]

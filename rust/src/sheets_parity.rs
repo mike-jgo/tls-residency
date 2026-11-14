@@ -1,4 +1,4 @@
-// The web app's Sheets client tests (web/test/sheets.test.js), ported to the
+// The web app's Sheets client tests (legacy/test/sheets.test.js), ported to the
 // native client, which talks HTTP to a stand-in for Google on this machine.
 //
 // The key in testdata/throwaway-test-key.pem was made for these tests only
@@ -275,7 +275,7 @@ fn how_a_tab_looks_is_sent_as_merges_cell_formats_and_sizes() {
     let sizes: Vec<_> = search.iter().filter_map(|r| r.get("updateDimensionProperties")).map(|r| r["range"]["dimension"].as_str().unwrap()).collect();
     assert!(sizes.contains(&"COLUMNS") && sizes.contains(&"ROWS"));
 
-    // Each tab styled as the web styles it (web/lib/style.js): frozen rows,
+    // Each tab styled as the web styles it (legacy/lib/style.js): frozen rows,
     // merges, cell formats, widths, heights.
     for (title, web) in [
         ("Totals", (0, 0, 3, 0, 0)),

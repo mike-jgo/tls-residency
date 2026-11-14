@@ -6,13 +6,13 @@ It will need neither Node nor Chromium for office workflows. There will be no
 network Admin site, as requested on 2026-11-10.
 
 The office Pi switched to the native app on 2026-11-11 (see *Rollout status*).
-web/ stays as the behavioural reference and as the Pi's rollback until the open
+legacy/ stays as the behavioural reference and as the Pi's rollback until the open
 hardware checks below are done. Production data and the live spreadsheet are
 not test fixtures.
 
 ## Package and architecture
 
-- rust/ includes its logos, fonts and sheet-layout data, independent of web/.
+- rust/ includes its logos, fonts and sheet-layout data, independent of legacy/.
 - Native screens call Rust services directly, with no HTTP server or browser.
 - SQLite keeps the existing users/events/meta schema and request IDs. Native
   pending receipts survive process restarts in a separate table.
@@ -65,9 +65,9 @@ footprint and Pi hardware checks below remain separate rollout requirements.
 3. Run the standalone app with sync disabled against a disposable database copy.
    Check every native workflow using screenshots and direct app control.
 4. Verify it runs with Node stopped and never launches a browser. Build the Rust
-   package without assets from web/.
+   package without assets from legacy/.
 5. Measure idle and twenty-reader-input memory/CPU again for the complete app.
-6. Document installation, import, backup/restore and rollback. Keep web/ until the
+6. Document installation, import, backup/restore and rollback. Keep legacy/ until the
    replacement is signed off.
 7. Cross-build arm64 and test the actual Pi display, reader, fonts and Linux
    backend at a quiet time. Arrange boot/service switchover together afterward.

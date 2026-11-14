@@ -5,7 +5,7 @@
 From `rust/`, run `cargo test --locked` and `cargo build --release --locked`.
 Windows output is `target/release/tls-residency.exe`; Linux output is
 `target/release/tls-residency`. The UI, logos, Schibsted Grotesk font and Sheets
-layout are embedded. `web/` is not a build or runtime dependency.
+layout are embedded. `legacy/` is not a build or runtime dependency.
 
 An installation contains the executable, `.env`, a writable data directory and,
 when sync is enabled, the service-account key. Include this guide, the font's
@@ -142,7 +142,7 @@ stays on overnight, a check-in nobody closed becomes a session that lasts until
 the next morning's tap. `MAX_SESSION_HOURS` is no longer read.
 
 **Rolling back to Node.** The old installation is untouched in `~/tls-residency`
-at commit `d95e968`. Do not `git pull` there: master keeps Node in `web/`, and
+at commit `d95e968`. Do not `git pull` there: master keeps Node in `legacy/`, and
 the old service runs `node server.js` from the folder's top level.
 
 ```bash

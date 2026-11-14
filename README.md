@@ -6,9 +6,9 @@ are handled by Rust. The native app does not start Node, open Chromium or expose
 an HTTP/Admin service on the office network.
 
 - `rust/`: the standalone app. It has run the office Pi since 2026-11-11.
-- `web/`: the previous Node implementation and its reference tests. It stays
+- `legacy/`: the previous Node implementation and its reference tests. It stays
   installed on the Pi, switched off, as the rollback. Its documentation is
-  preserved in [web/README.md](web/README.md).
+  preserved in [legacy/README.md](legacy/README.md).
 - [PLAN.md](PLAN.md): migration scope and verification checklist.
 - [rust/README.md](rust/README.md): build, configuration, import and recovery.
 
@@ -40,7 +40,7 @@ cargo test --locked
 cargo build --release --locked
 ```
 
-The reference suite remains available with `npm test` in `web/`. Native service
+The reference suite remains available with `npm test` in `legacy/`. Native service
 tests use temporary databases and a Google Sheets stand-in, never the live sheet.
 
 ## Office workflows

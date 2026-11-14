@@ -1,4 +1,4 @@
-// The web app's sync tests (web/test/sync.test.js), ported to the native sync
+// The web app's sync tests (legacy/test/sync.test.js), ported to the native sync
 // engine, against the stand-in sheet in test_support.rs. Names follow the web
 // file's, in the same sections.
 //

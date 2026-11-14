@@ -1,4 +1,4 @@
-// The web app's scanner tests (web/test/scan.test.js), ported one for one so
+// The web app's scanner tests (legacy/test/scan.test.js), ported one for one so
 // the native scanner is held to the same rules. Test names match the web
 // file's, in the same order and sections.
 //
@@ -23,7 +23,7 @@ use chrono::{TimeZone, Utc};
 
 const SECOND: i64 = 1000;
 const HOUR: i64 = 3_600_000;
-// web/lib/scan.js REPEAT_IGNORE_MS and UNKNOWN_KEEP.
+// legacy/lib/scan.js REPEAT_IGNORE_MS and UNKNOWN_KEEP.
 const REPEAT_IGNORE_MS: i64 = 5000;
 const UNKNOWN_KEEP: usize = 20;
 const BOOT: &str = "boot-monday";

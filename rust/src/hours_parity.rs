@@ -1,4 +1,4 @@
-// The web app's hours and report tests (web/test/hours.test.js and
+// The web app's hours and report tests (legacy/test/hours.test.js and
 // report.test.js), ported. Sessions come from `model::sessions`; the range
 // filter and rounding the web keeps in hours.js are in `Store::report`.
 
@@ -141,7 +141,7 @@ fn hours_are_rounded_to_two_decimals_for_the_report() {
     assert_eq!(report(&[("in", 0), ("out", HOUR / 3)], None, None).hours, 0.33);
 }
 
-// ---- The report: CSV and leaderboards (web/test/report.test.js) ----------
+// ---- The report: CSV and leaderboards (legacy/test/report.test.js) ----------
 
 fn row(name: &str, f: impl FnOnce(&mut ReportRow)) -> ReportRow {
     let mut r = ReportRow {

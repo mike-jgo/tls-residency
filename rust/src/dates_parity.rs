@@ -1,4 +1,4 @@
-// The web app's date tests (web/test/dates.test.js), ported. The web's
+// The web app's date tests (legacy/test/dates.test.js), ported. The web's
 // dayBounds returns { error }; natively `Dates::bounds` returns Err, and the
 // caller (Hours) shows it, so "reported, not thrown" is the Err itself.
 

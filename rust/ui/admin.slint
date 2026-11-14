@@ -1,5 +1,5 @@
 // Register and Admin, drawn inside the tap screen's own window and styled
-// after the web app's admin pages (web/views.js `layout`): light, a top bar
+// after the web app's admin pages (legacy/views.js `layout`): light, a top bar
 // of links, a 960px column of white panels with uppercase headings, tables.
 //
 // Rust drives everything through the `Admin` global, so the tap screen window
@@ -93,7 +93,7 @@ export global Admin {
     callback activity;
 }
 
-// The web app's colours (web/views.js `layout` :root).
+// The web app's colours (legacy/views.js `layout` :root).
 global Web {
     out property <color> ink: #12181f;
     out property <color> panel: #ffffff;

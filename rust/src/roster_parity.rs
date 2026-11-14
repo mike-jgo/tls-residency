@@ -1,4 +1,4 @@
-// The web app's roster tests (web/test/roster.test.js), ported: how a device
+// The web app's roster tests (legacy/test/roster.test.js), ported: how a device
 // follows the Staffers tab (`pull`) and where a save from People goes
 // (`place`). Messages are compared case-insensitively on the phrase that
 // matters, since the wording differs slightly between the apps.

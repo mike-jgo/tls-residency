@@ -1,4 +1,4 @@
-// The web app's backup tests (web/test/backup.test.js), ported to the native
+// The web app's backup tests (legacy/test/backup.test.js), ported to the native
 // app's own backup and restore (Admin > System). A child of core.rs, so it can
 // build a Core the way core's own tests do.
 //

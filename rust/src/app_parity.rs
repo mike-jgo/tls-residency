@@ -1,5 +1,5 @@
 // The web app's people, auth, appearance and flows tests
-// (web/test/people.test.js, auth.test.js, appearance.test.js, flows.test.js),
+// (legacy/test/people.test.js, auth.test.js, appearance.test.js, flows.test.js),
 // ported where they test a rule rather than a web page. A child of core.rs.
 //
 // Not ported, as they test the web's HTML, cookies or browser scripts:
@@ -25,7 +25,7 @@ fn person(changes: impl FnOnce(&mut Person)) -> Person {
     p
 }
 
-// ---- People (web/test/people.test.js) --------------------------------------
+// ---- People (legacy/test/people.test.js) --------------------------------------
 
 #[test]
 fn a_telegram_handle_is_stored_with_one_at_however_it_was_typed() {
@@ -87,7 +87,7 @@ fn a_section_or_status_that_is_not_on_the_list_is_refused() {
     assert!(person(|p| p.status = "Boss".into()).validated().is_err());
 }
 
-// ---- Admin sign-in (web/test/auth.test.js) ---------------------------------
+// ---- Admin sign-in (legacy/test/auth.test.js) ---------------------------------
 
 struct Fixture(PathBuf);
 impl Fixture {
@@ -153,7 +153,7 @@ fn sessions_expire_after_inactivity_and_are_lost_on_restart() {
     assert!(!f.core("secret").authenticated(), "a new run starts signed out");
 }
 
-// ---- Appearance (web/test/appearance.test.js) ------------------------------
+// ---- Appearance (legacy/test/appearance.test.js) ------------------------------
 
 const PNG: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 fn png(dir: &Path, name: &str) -> PathBuf {
@@ -280,7 +280,7 @@ fn a_season_is_one_of_the_listed_themes_and_a_bad_one_keeps_the_old() {
     assert_eq!(core.snapshot().unwrap().appearance.theme, "none");
 }
 
-// ---- Flows (web/test/flows.test.js) ----------------------------------------
+// ---- Flows (legacy/test/flows.test.js) ----------------------------------------
 
 /// A lost tap reply keeps its receipt across a restart and reuses it safely.
 #[test]
